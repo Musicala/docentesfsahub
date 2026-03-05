@@ -1,0 +1,347 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
+
+  <!-- Light-only (por favor, no volvamos a UI oscura en Musicala 😌) -->
+  <meta name="color-scheme" content="light" />
+
+  <!-- Brand / theme -->
+  <meta name="theme-color" content="#0C41C4" />
+
+  <!-- SEO / share -->
+  <meta name="description" content="Hub de accesos para Docentes (login con Google). Accesos rápidos a herramientas, protocolos y registros." />
+  <meta name="robots" content="noindex,nofollow" />
+  <meta property="og:title" content="Docentes FSA Hub" />
+  <meta property="og:description" content="Accesos rápidos a herramientas, protocolos y registros (login con Google)." />
+  <meta property="og:type" content="website" />
+  <meta property="og:image" content="./icons/icon-512.png" />
+
+  <!-- Preloads (mejora percepción de carga) -->
+  <link rel="preload" as="image" href="./logo.png" />
+  <link rel="preload" as="image" href="./icons/icon-192.png" />
+
+  <!-- PWA -->
+  <link rel="manifest" href="./manifest.webmanifest" />
+  <link rel="icon" href="./icons/icon-192.png" />
+  <link rel="apple-touch-icon" sizes="192x192" href="./icons/icon-192.png" />
+  <link rel="apple-touch-icon" sizes="512x512" href="./icons/icon-512.png" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="default" />
+  <meta name="mobile-web-app-capable" content="yes" />
+
+  <!-- iOS niceties -->
+  <meta name="format-detection" content="telephone=no,date=no,address=no,email=no,url=no" />
+  <meta name="apple-mobile-web-app-title" content="Docentes FSA Hub" />
+
+  <title>Docentes FSA Hub</title>
+  <link rel="stylesheet" href="./styles.css" />
+</head>
+
+<body>
+  <!-- Skip link (accesibilidad) -->
+  <a class="skip" href="#grid"
+     style="position:absolute;left:-9999px;top:auto;width:1px;height:1px;overflow:hidden;">
+    Saltar a accesos
+  </a>
+
+  <div class="appRoot" role="application" aria-label="Docentes Hub · Accesos">
+    <div class="screen">
+
+      <!-- Banner de actualización PWA -->
+      <div id="pwa-update" class="pwaUpdate" hidden role="status" aria-live="polite" aria-atomic="true">
+        <span class="pwaUpdateText">Hay una actualización lista.</span>
+        <button class="pwaUpdateBtn" id="btn-update" type="button">Actualizar</button>
+      </div>
+
+      <!-- ===== LOGIN ===== -->
+      <main class="wrap" id="view-login" hidden>
+        <section class="loginCard" aria-label="Inicio de sesión">
+          <div class="loginBrand">
+            <div class="mark" aria-hidden="true">
+              <img class="markImg" src="./logo.png" alt="Musicala"
+                   onerror="this.style.display='none'; this.parentElement.classList.add('fallback');" />
+              <div class="markFallback" aria-hidden="true">🎶</div>
+            </div>
+
+            <div class="brandText">
+              <h1 class="brandTitle" id="hub-title">Docentes FSA Hub</h1>
+              <p class="brandSub" id="hub-subtitle">Acceso con Google</p>
+            </div>
+          </div>
+
+          <div class="loginActions">
+            <button class="btnGoogle" id="btn-google" type="button" aria-label="Entrar con Google">
+              <span class="gIcon" aria-hidden="true">G</span>
+              Entrar con Google
+            </button>
+
+            <button class="btnGhost" id="btn-install" type="button" hidden>
+              Instalar app
+            </button>
+
+            <p class="loginHint">Usa tu cuenta autorizada 🙂</p>
+          </div>
+        </section>
+
+        <div class="toast" id="toast" role="status" aria-live="polite" aria-atomic="true"></div>
+      </main>
+
+      <!-- ===== APP ===== -->
+      <main class="wrap" id="view-app" hidden>
+        <header class="top" role="banner">
+          <div class="brand">
+            <div class="logoWrap" aria-hidden="true">
+              <img class="logoImg" src="./logo.png" alt=""
+                   onerror="this.style.display='none'; this.parentElement.classList.add('fallback');" />
+              <div class="logoFallback" aria-hidden="true">🎓</div>
+            </div>
+
+            <div class="brandCopy">
+              <h2 class="appTitle" id="app-title">Docentes FSA Hub</h2>
+
+              <!-- Línea de usuario + estado red -->
+              <div class="userRow" aria-label="Estado">
+                <p id="user-line" class="userLine">Accesos rápidos</p>
+
+                <!-- Net pill (app.js puede actualizar texto/clase) -->
+                <span id="net-pill" class="netPill" role="status" aria-live="polite" aria-atomic="true">
+                  Conectado
+                </span>
+              </div>
+            </div>
+
+            <div class="brandActions" aria-label="Acciones">
+              <!-- Menú corporativo (Drawer) -->
+              <button
+                class="btnGhost"
+                id="btn-menu"
+                type="button"
+                title="Menú"
+                aria-label="Abrir menú"
+                aria-haspopup="dialog"
+                aria-controls="app-drawer"
+                aria-expanded="false"
+              >
+                ☰
+              </button>
+
+              <button class="btnGhost" id="btn-install-2" type="button" title="Instalar" hidden>
+                Instalar
+              </button>
+
+              <button class="btnGhost" id="btn-logout" type="button" title="Salir">
+                Salir
+              </button>
+            </div>
+          </div>
+
+          <!-- Barra rápida -->
+          <div class="quickBar" aria-label="Acciones rápidas">
+            <button class="btnGhost" id="btn-open-search" type="button" aria-label="Buscar accesos">
+              🔎 Buscar
+            </button>
+            <button class="btnGhost" id="btn-open-favorites" type="button" aria-label="Ver favoritos">
+              ⭐ Favoritos
+            </button>
+          </div>
+        </header>
+
+        <!-- Grid de accesos -->
+        <section class="grid" id="grid" aria-label="Accesos">
+          <div class="gridEmpty" id="grid-empty" aria-live="polite">
+            Cargando accesos…
+          </div>
+        </section>
+
+        <div class="toast" id="toast-app" role="status" aria-live="polite" aria-atomic="true" hidden></div>
+
+        <!-- Overlay genérico para modales/drawer -->
+        <div
+          id="drawer-overlay"
+          class="drawerOverlay"
+          hidden
+          tabindex="-1"
+          aria-hidden="true"
+        ></div>
+
+        <!-- ===== DRAWER ===== -->
+        <aside
+          id="app-drawer"
+          class="drawer"
+          hidden
+          role="dialog"
+          aria-modal="true"
+          aria-label="Menú"
+        >
+          <div class="drawerHead">
+            <div class="drawerBrand">
+              <div class="drawerLogo" aria-hidden="true">
+                <img src="./logo.png" alt="" onerror="this.style.display='none';" />
+              </div>
+
+              <div class="drawerTxt">
+                <div class="drawerTitle" id="drawer-hub-title">Docentes FSA Hub</div>
+                <div class="drawerSub" id="drawer-hub-sub">Accesos rápidos</div>
+              </div>
+            </div>
+
+            <!-- ✅ FIX: app.js busca #drawer-close -->
+            <button class="btnGhost drawerClose" id="drawer-close" type="button" aria-label="Cerrar menú" title="Cerrar">
+              ✕
+            </button>
+          </div>
+
+          <div class="drawerBody">
+            <section class="drawerSection" aria-label="Perfil">
+              <div class="drawerLabel">Perfil</div>
+              <div class="drawerCard">
+                <div class="drawerUser">
+                  <div class="drawerAvatar" aria-hidden="true">👤</div>
+                  <div class="drawerUserTxt">
+                    <div class="drawerUserName" id="drawer-user-name">Usuario</div>
+                    <div class="drawerUserMail" id="drawer-user-email">correo@dominio.com</div>
+                  </div>
+                </div>
+              </div>
+            </section>
+
+            <section class="drawerSection" aria-label="Acciones">
+              <div class="drawerLabel">Acciones</div>
+
+              <!-- ✅ FIX: app.js escucha [data-action] -->
+              <button class="drawerItem" type="button" data-action="open:favorites" aria-label="Ver favoritos">
+                <span class="diIco" aria-hidden="true">⭐</span>
+                <span class="diTxt">
+                  <span class="diTitle">Favoritos</span>
+                  <span class="diSub">Tus accesos más usados</span>
+                </span>
+              </button>
+
+              <button class="drawerItem" type="button" data-action="open:search" aria-label="Buscar accesos">
+                <span class="diIco" aria-hidden="true">🔎</span>
+                <span class="diTxt">
+                  <span class="diTitle">Buscar</span>
+                  <span class="diSub">Encuentra rápido un módulo</span>
+                </span>
+              </button>
+
+              <button class="drawerItem" type="button" data-action="switchHub" aria-label="Cambiar Hub">
+                <span class="diIco" aria-hidden="true">🧭</span>
+                <span class="diTxt">
+                  <span class="diTitle">Cambiar Hub</span>
+                  <span class="diSub">Docentes / Admin / Practicantes</span>
+                </span>
+              </button>
+
+              <button class="drawerItem" type="button" data-action="support" aria-label="Soporte">
+                <span class="diIco" aria-hidden="true">🛟</span>
+                <span class="diTxt">
+                  <span class="diTitle">Soporte</span>
+                  <span class="diSub">Reportar un problema</span>
+                </span>
+              </button>
+            </section>
+
+            <section class="drawerSection" aria-label="Sistema">
+              <div class="drawerLabel">Sistema</div>
+
+              <div class="drawerMeta">
+                <div class="drawerMetaRow">
+                  <span class="dmKey">Versión</span>
+                  <span class="dmVal" id="drawer-build">BUILD</span>
+                </div>
+                <div class="drawerMetaRow">
+                  <span class="dmKey">Estado</span>
+                  <span class="dmVal" id="drawer-status">OK</span>
+                </div>
+              </div>
+
+              <button class="drawerItem danger" type="button" data-action="logout" aria-label="Cerrar sesión">
+                <span class="diIco" aria-hidden="true">🚪</span>
+                <span class="diTxt">
+                  <span class="diTitle">Cerrar sesión</span>
+                  <span class="diSub">Salir de este dispositivo</span>
+                </span>
+              </button>
+            </section>
+          </div>
+
+          <div class="drawerFoot">
+            <button class="btnGhost drawerFootBtn" id="btn-drawer-install" type="button" hidden>
+              Instalar app
+            </button>
+          </div>
+        </aside>
+
+        <!-- ===== MODAL: SEARCH ===== -->
+        <section
+          id="modal-search"
+          class="modal"
+          hidden
+          role="dialog"
+          aria-modal="true"
+          aria-label="Buscar accesos"
+        >
+          <div class="modalCard">
+            <div class="modalHead">
+              <div class="modalTitle">Buscar</div>
+              <button class="btnGhost" id="btn-search-close" type="button" aria-label="Cerrar buscar" title="Cerrar">
+                ✕
+              </button>
+            </div>
+
+            <div class="modalBody">
+              <label class="field">
+                <span class="fieldLabel">Escribe para filtrar</span>
+                <input
+                  id="search-input"
+                  class="input"
+                  type="search"
+                  inputmode="search"
+                  autocomplete="off"
+                  placeholder="Ej: asistencia, clase, horarios…"
+                />
+              </label>
+
+              <div id="search-results" class="modalList" aria-live="polite">
+                <div class="muted">Empieza a escribir para ver resultados.</div>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <!-- ===== MODAL: FAVORITES ===== -->
+        <section
+          id="modal-favorites"
+          class="modal"
+          hidden
+          role="dialog"
+          aria-modal="true"
+          aria-label="Favoritos"
+        >
+          <div class="modalCard">
+            <div class="modalHead">
+              <div class="modalTitle">Favoritos</div>
+              <button class="btnGhost" id="btn-favorites-close" type="button" aria-label="Cerrar favoritos" title="Cerrar">
+                ✕
+              </button>
+            </div>
+
+            <div class="modalBody">
+              <div id="favorites-list" class="modalList" aria-live="polite">
+                <div class="muted">Aún no tienes favoritos ⭐</div>
+              </div>
+            </div>
+          </div>
+        </section>
+
+      </main>
+
+      <script type="module" src="./app.js"></script>
+      <noscript>Esta app necesita JavaScript para funcionar.</noscript>
+    </div>
+  </div>
+</body>
+</html>
