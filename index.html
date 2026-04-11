@@ -148,12 +148,118 @@
           </div>
         </header>
 
+        <section class="workspaceHero" aria-label="Centro de trabajo docente">
+          <div class="heroIntro">
+            <p class="heroEyebrow">Inicio de hoy</p>
+            <h3 class="heroTitle">Todo lo importante primero</h3>
+            <p class="heroText" id="hero-summary">
+              Gestiona la jornada, la base de estudiantes, la asistencia y las bitacoras desde un solo lugar.
+            </p>
+            <div class="heroAreaList" id="hero-area-list" aria-label="Areas activas"></div>
+          </div>
+
+          <div class="heroFocus">
+            <div class="heroFocusLabel">Estado de hoy</div>
+            <div class="heroFocusTitle" id="hero-shift-title">Jornada disponible</div>
+            <p class="heroFocusText" id="hero-shift-subtitle">
+              Marca tu entrada con un solo boton y cierra la sesion cuando termines.
+            </p>
+
+            <div class="heroActions">
+              <button class="btnPrimary" id="btn-hero-shift" type="button">Jornada</button>
+              <button class="btnGhost" id="btn-pending-shift" type="button" hidden>Revisar cierre</button>
+            </div>
+          </div>
+
+          <div class="heroPrimaryGrid" aria-label="Accesos principales">
+            <button class="heroModule" id="btn-hero-students" type="button">
+              <span class="heroModuleIcon" aria-hidden="true">🧒</span>
+              <span class="heroModuleText">
+                <strong>Estudiantes</strong>
+                <small>Base por area</small>
+              </span>
+            </button>
+
+            <button class="heroModule" id="btn-hero-attendance" type="button">
+              <span class="heroModuleIcon" aria-hidden="true">📝</span>
+              <span class="heroModuleText">
+                <strong>Asistencia</strong>
+                <small>Registro por clase</small>
+              </span>
+            </button>
+
+            <button class="heroModule" id="btn-hero-logs" type="button">
+              <span class="heroModuleIcon" aria-hidden="true">📒</span>
+              <span class="heroModuleText">
+                <strong>Bitacoras</strong>
+                <small>Agregar o editar</small>
+              </span>
+            </button>
+
+            <button class="heroModule" id="btn-hero-carnet" type="button">
+              <span class="heroModuleIcon" aria-hidden="true">🪪</span>
+              <span class="heroModuleText">
+                <strong>Carnet</strong>
+                <small>Credencial docente</small>
+              </span>
+            </button>
+          </div>
+
+          <div class="heroStats" aria-label="Resumen rapido">
+            <article class="heroStat">
+              <span class="heroStatLabel">Areas</span>
+              <strong class="heroStatValue" id="hero-areas">-</strong>
+            </article>
+            <article class="heroStat">
+              <span class="heroStatLabel">Estudiantes</span>
+              <strong class="heroStatValue" id="hero-students-count">0</strong>
+            </article>
+            <article class="heroStat">
+              <span class="heroStatLabel">Asistencias</span>
+              <strong class="heroStatValue" id="hero-attendance-count">0</strong>
+            </article>
+            <article class="heroStat">
+              <span class="heroStatLabel">Bitacoras</span>
+              <strong class="heroStatValue" id="hero-logs-count">0</strong>
+            </article>
+          </div>
+
+          <div id="pending-shift-banner" class="moduleAlert pendingBanner" hidden>
+            <div>
+              <div class="moduleAlertTitle">Hay una sesion anterior sin cerrar</div>
+              <p class="moduleAlertText" id="pending-shift-copy">
+                Revisa tu ultima jornada y registra la hora de salida manualmente.
+              </p>
+            </div>
+            <button class="btnGhost" id="btn-pending-shift-banner" type="button">Revisar</button>
+          </div>
+        </section>
+
         <!-- Grid de accesos -->
         <section class="grid" id="grid" aria-label="Accesos">
           <div class="gridEmpty" id="grid-empty" aria-live="polite">
             Cargando accesos…
           </div>
         </section>
+
+        <nav class="bottomDock" aria-label="Navegacion principal">
+          <button class="dockTab is-active" id="tab-home" type="button" data-tab="home" aria-label="Ir al inicio">
+            <span class="dockIcon" aria-hidden="true">⌂</span>
+            <span class="dockLabel">Inicio</span>
+          </button>
+          <button class="dockTab" id="tab-students" type="button" data-tab="students" aria-label="Abrir estudiantes">
+            <span class="dockIcon" aria-hidden="true">◫</span>
+            <span class="dockLabel">Estudiantes</span>
+          </button>
+          <button class="dockTab" id="tab-attendance" type="button" data-tab="attendance" aria-label="Abrir asistencia">
+            <span class="dockIcon" aria-hidden="true">☑</span>
+            <span class="dockLabel">Asistencia</span>
+          </button>
+          <button class="dockTab" id="tab-logs" type="button" data-tab="logs" aria-label="Abrir bitacoras">
+            <span class="dockIcon" aria-hidden="true">▤</span>
+            <span class="dockLabel">Bitacoras</span>
+          </button>
+        </nav>
 
         <div class="toast" id="toast-app" role="status" aria-live="polite" aria-atomic="true" hidden></div>
 
@@ -333,6 +439,38 @@
               <div id="favorites-list" class="modalList" aria-live="polite">
                 <div class="muted">Aún no tienes favoritos ⭐</div>
               </div>
+            </div>
+          </div>
+        </section>
+
+        <section
+          id="modal-workspace"
+          class="modal modalWide"
+          hidden
+          role="dialog"
+          aria-modal="true"
+          aria-label="Centro de trabajo"
+        >
+          <div class="modalCard workspaceModalCard">
+            <div class="modalHead workspaceHead">
+              <div class="workspaceTitleWrap">
+                <div class="modalEyebrow" id="workspace-eyebrow">Centro de trabajo</div>
+                <div class="modalTitle" id="workspace-title">Modulo</div>
+                <p class="workspaceSub" id="workspace-subtitle">
+                  Gestiona la informacion principal sin salir de la app.
+                </p>
+              </div>
+
+              <div class="workspaceHeadActions">
+                <button class="btnGhost" id="btn-workspace-refresh" type="button">Actualizar</button>
+                <button class="btnGhost" id="btn-workspace-close" type="button" aria-label="Cerrar modulo" title="Cerrar">
+                  &#10005;
+                </button>
+              </div>
+            </div>
+
+            <div class="modalBody workspaceBody">
+              <div id="workspace-content"></div>
             </div>
           </div>
         </section>
