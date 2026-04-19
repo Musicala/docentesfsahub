@@ -136,16 +136,25 @@ import {
   where,
   serverTimestamp
 } from 'https://www.gstatic.com/firebasejs/10.12.5/firebase-firestore.js';
+import {
+  getStorage,
+  ref as storageRef,
+  uploadBytes,
+  getDownloadURL
+} from 'https://www.gstatic.com/firebasejs/10.12.5/firebase-storage.js';
 
 const $ = (sel, el = document) => el.querySelector(sel);
 const $$ = (sel, el = document) => Array.from(el.querySelectorAll(sel));
 
 let DB = null;
 let AUTH = null;
+let STORAGE = null;
 let CURRENT_USER = null;
 let ACTIVE_LINKS = {};
 let ACTIVE_PROFILE = null;
 let ACTIVE_EMAIL = '';
+const LOG_PHOTO_LIMIT = 8;
+const LOG_PHOTO_MAX_BYTES = 8 * 1024 * 1024;
 
 const SHIFT_STATE = {
   loading: false,
@@ -180,7 +189,9 @@ const MODULE_STATE = {
   },
   logs: {
     areaId: '',
-    editingId: ''
+    editingId: '',
+    showGallery: false,
+    galleryAreaId: 'all'
   }
 };
 
@@ -1057,6 +1068,8 @@ function clearDataState() {
   MODULE_STATE.attendance.editingId = '';
   MODULE_STATE.logs.areaId = '';
   MODULE_STATE.logs.editingId = '';
+  MODULE_STATE.logs.showGallery = false;
+  MODULE_STATE.logs.galleryAreaId = 'all';
 }
 
 async function doLogout(auth) {
@@ -1670,7 +1683,8 @@ function getLogDraft() {
       achievements: editing.achievements || '',
       challenges: editing.challenges || '',
       followUp: editing.followUp || '',
-      notes: editing.notes || ''
+      notes: editing.notes || '',
+      photos: Array.isArray(editing.photos) ? editing.photos : []
     };
   }
 
@@ -1688,7 +1702,8 @@ function getLogDraft() {
     achievements: '',
     challenges: '',
     followUp: '',
-    notes: ''
+    notes: '',
+    photos: []
   };
 }
 
@@ -2151,6 +2166,8 @@ function renderAttendanceCard(record) {
 
 function renderLogCard(record) {
   const excerpt = record.activities || record.achievements || record.notes || 'Sin resumen corto.';
+  const photos = Array.isArray(record.photos) ? record.photos : [];
+  const firstPhoto = photos[0]?.url || '';
   return `
     <button class="recordCard" type="button" data-module-action="log-edit" data-log-id="${escapeHtml(record.id)}">
       <div class="recordCardTop">
@@ -2161,8 +2178,34 @@ function renderLogCard(record) {
         <span class="statusPill statusInfo">${escapeHtml(record.siteName || 'Sin sede')}</span>
       </div>
       <div class="recordBody">${escapeHtml(excerpt.slice(0, 140))}</div>
+      ${firstPhoto ? `<div class="recordPhotoThumb"><img src="${escapeHtml(firstPhoto)}" alt="Foto de ${escapeHtml(record.sessionName || 'bitacora')}" loading="lazy" /></div>` : ''}
+      ${photos.length ? `<div class="recordPhotoMeta">📷 ${escapeHtml(String(photos.length))} foto(s)</div>` : ''}
     </button>
   `;
+}
+
+function renderLogGallery(areaId) {
+  const logsWithPhotos = DATA_STATE.logs.filter((item) => {
+    if (!Array.isArray(item.photos) || !item.photos.length) return false;
+    if (areaId === 'all') return true;
+    return item.areaId === areaId;
+  });
+
+  if (!logsWithPhotos.length) {
+    return `<div class="galleryEmpty">Aun no hay fotos en bitacoras para este filtro.</div>`;
+  }
+
+  const cards = logsWithPhotos.flatMap((record) => {
+    const photos = Array.isArray(record.photos) ? record.photos.filter((item) => item?.url) : [];
+    return photos.map((photo, index) => `
+      <button class="galleryCard" type="button" data-module-action="log-edit" data-log-id="${escapeHtml(record.id)}">
+        <img src="${escapeHtml(photo.url || '')}" alt="Foto ${escapeHtml(String(index + 1))} de ${escapeHtml(record.sessionName || 'bitacora')}" loading="lazy" />
+        <span class="galleryMeta">${escapeHtml(record.sessionName || 'Bitacora')} · ${escapeHtml(formatDateLabel(record.date))}</span>
+      </button>
+    `);
+  }).join('');
+
+  return `<div class="galleryGrid">${cards}</div>`;
 }
 
 function renderAttendanceStatusOptions(selected = 'presente') {
@@ -2452,6 +2495,9 @@ function renderAttendanceModule() {
 function renderLogsModule() {
   const draft = getLogDraft();
   const areaId = userCanAccessArea(draft.areaId) ? draft.areaId : getPrimaryAreaId();
+  const galleryAreaId = MODULE_STATE.logs.galleryAreaId || 'all';
+  const showGallery = !!MODULE_STATE.logs.showGallery;
+  const attachedPhotos = Array.isArray(draft.photos) ? draft.photos : [];
   MODULE_STATE.logs.areaId = areaId;
 
   return `
@@ -2462,12 +2508,34 @@ function renderLogsModule() {
             <h4 class="moduleTitle">Bitacoras de clase</h4>
             <p class="moduleIntro">Consulta bitacoras anteriores y edita una existente sin salir de la app.</p>
           </div>
-          <button class="btnGhost" type="button" data-module-action="log-new">Nueva bitacora</button>
+          <div class="toolbarRow">
+            <button class="btnGhost" type="button" data-module-action="log-toggle-gallery">${showGallery ? 'Ocultar galeria de fotos' : 'Ver galeria de fotos'}</button>
+            <button class="btnGhost" type="button" data-module-action="log-new">Nueva bitacora</button>
+          </div>
         </div>
 
         <div class="recordList">
           ${DATA_STATE.logs.length ? DATA_STATE.logs.map(renderLogCard).join('') : renderEmptyState('Sin bitacoras registradas', 'Cuando completes la primera bitacora aparecera aqui para lectura y edicion.')}
         </div>
+
+        ${showGallery ? `
+        <section class="logGallerySection">
+          <div class="moduleSurfaceHead">
+            <div>
+              <h5 class="moduleTitle">Galeria de imagenes</h5>
+              <p class="moduleIntro">Vista visual de fotos cargadas en bitacoras.</p>
+            </div>
+          </div>
+          <label class="field">
+            <span class="fieldLabel">Filtrar galeria por area</span>
+            <select class="input" name="galleryAreaId">
+              <option value="all"${galleryAreaId === 'all' ? ' selected' : ''}>Todas mis areas</option>
+              ${renderAreaOptions({ includeAll: false, selected: galleryAreaId })}
+            </select>
+          </label>
+          ${renderLogGallery(galleryAreaId)}
+        </section>
+        ` : ''}
       </section>
 
       <section class="moduleSurface moduleSurfaceForm">
@@ -2538,6 +2606,21 @@ function renderLogsModule() {
             <span class="fieldLabel">Notas adicionales</span>
             <textarea class="input textareaInput" name="notes" rows="4">${escapeHtml(draft.notes)}</textarea>
           </label>
+
+          <label class="field fieldSpan2">
+            <span class="fieldLabel">Fotos de la sesion (hasta ${LOG_PHOTO_LIMIT})</span>
+            <input class="input" name="photos" type="file" accept="image/*" multiple />
+            <small class="fieldHint">Puedes cargar JPG, PNG o WEBP. Maximo ${Math.floor(LOG_PHOTO_MAX_BYTES / 1024 / 1024)}MB por imagen.</small>
+          </label>
+
+          ${attachedPhotos.length ? `
+          <div class="field fieldSpan2">
+            <span class="fieldLabel">Fotos ya registradas</span>
+            <div class="formPhotoGrid">
+              ${attachedPhotos.map((photo, index) => `<a class="formPhotoLink" href="${escapeHtml(photo.url || '')}" target="_blank" rel="noreferrer"><img src="${escapeHtml(photo.url || '')}" alt="Foto ${escapeHtml(String(index + 1))}" loading="lazy" /></a>`).join('')}
+            </div>
+          </div>
+          ` : ''}
 
           <div class="formActions fieldSpan2">
             <button class="btnPrimary" type="submit">${draft.id ? 'Guardar bitacora' : 'Registrar bitacora'}</button>
@@ -2779,6 +2862,26 @@ async function saveLog(formData) {
     return;
   }
 
+  const files = formData.getAll('photos').filter((item) => item instanceof File && item.size > 0);
+  if (files.length > LOG_PHOTO_LIMIT) {
+    toast(`Solo puedes subir hasta ${LOG_PHOTO_LIMIT} fotos por bitacora.`);
+    return;
+  }
+  if (files.some((file) => file.size > LOG_PHOTO_MAX_BYTES)) {
+    toast(`Cada foto debe pesar maximo ${Math.floor(LOG_PHOTO_MAX_BYTES / 1024 / 1024)}MB.`);
+    return;
+  }
+  if (files.length && !STORAGE) {
+    toast('Firebase Storage no esta listo. Configuralo e intenta de nuevo.');
+    return;
+  }
+
+  const currentPhotoList = logId
+    ? (DATA_STATE.logs.find((item) => item.id === logId)?.photos || [])
+    : [];
+  let nextPhotoList = Array.isArray(currentPhotoList) ? [...currentPhotoList] : [];
+  const targetLogId = logId || doc(collection(DB, COLLECTIONS.classLogs)).id;
+
   const payload = {
     areaId,
     areaName: getAreaLabel(areaId),
@@ -2792,6 +2895,7 @@ async function saveLog(formData) {
     challenges: readFormValue(formData, 'challenges'),
     followUp: readFormValue(formData, 'followUp'),
     notes: readFormValue(formData, 'notes'),
+    photos: nextPhotoList,
     teacherId: CURRENT_USER.uid,
     teacherEmail: emailKey(CURRENT_USER),
     teacherName: getTeacherDisplayName(),
@@ -2803,10 +2907,34 @@ async function saveLog(formData) {
   if (logId) {
     await updateDoc(doc(DB, COLLECTIONS.classLogs, logId), payload);
   } else {
-    await addDoc(collection(DB, COLLECTIONS.classLogs), {
+    await setDoc(doc(DB, COLLECTIONS.classLogs, targetLogId), {
       ...payload,
       createdAt: serverTimestamp(),
       createdAtClient: Date.now()
+    });
+  }
+
+  if (files.length) {
+    for (const file of files) {
+      const cleanName = (file.name || 'foto.jpg').replace(/[^a-zA-Z0-9.\-_]/g, '_');
+      const path = `classLogs/${targetLogId}/${Date.now()}_${Math.random().toString(36).slice(2, 8)}_${cleanName}`;
+      const fileRef = storageRef(STORAGE, path);
+      await uploadBytes(fileRef, file);
+      const url = await getDownloadURL(fileRef);
+      nextPhotoList.push({
+        name: file.name || 'foto',
+        type: file.type || 'image/*',
+        size: file.size || 0,
+        path,
+        url,
+        uploadedAtClient: Date.now()
+      });
+    }
+
+    await updateDoc(doc(DB, COLLECTIONS.classLogs, targetLogId), {
+      photos: nextPhotoList,
+      updatedAt: serverTimestamp(),
+      updatedAtClient: Date.now()
     });
   }
 
@@ -2866,6 +2994,12 @@ function bindWorkspaceModal() {
       return;
     }
 
+    if (action === 'log-toggle-gallery') {
+      MODULE_STATE.logs.showGallery = !MODULE_STATE.logs.showGallery;
+      renderWorkspaceModule();
+      return;
+    }
+
     if (action === 'log-edit') {
       MODULE_STATE.logs.editingId = actionEl.getAttribute('data-log-id') || '';
       const record = DATA_STATE.logs.find((item) => item.id === MODULE_STATE.logs.editingId);
@@ -2905,6 +3039,12 @@ function bindWorkspaceModal() {
     if (target.getAttribute('name') === 'areaId' && target.closest('#log-form')) {
       MODULE_STATE.logs.areaId = target.value;
       MODULE_STATE.logs.editingId = '';
+      renderWorkspaceModule();
+      return;
+    }
+
+    if (target.getAttribute('name') === 'galleryAreaId') {
+      MODULE_STATE.logs.galleryAreaId = target.value || 'all';
       renderWorkspaceModule();
     }
   });
@@ -3040,9 +3180,11 @@ async function mount() {
   const app = initializeApp(firebaseConfig);
   const auth = getAuth(app);
   const db = getFirestore(app);
+  const storage = getStorage(app);
 
   AUTH = auth;
   DB = db;
+  STORAGE = storage;
 
   try {
     await setPersistence(auth, browserLocalPersistence);
