@@ -231,6 +231,7 @@ let modalShellBound = false;
 let workspaceBound = false;
 let carnetModal = null;
 let deferredInstallPrompt = null;
+let loginInFlight = false;
 
 function escapeHtml(value) {
   return String(value ?? '')
@@ -1039,23 +1040,42 @@ function friendlyAuthError(code = '') {
   if (code === 'auth/popup-blocked') return 'El navegador bloqueo la ventana del login.';
   if (code === 'auth/cancelled-popup-request') return 'Se cancelo la solicitud de inicio de sesion.';
   if (code === 'auth/popup-closed-by-user') return 'Cerraste la ventana del login.';
+  if (code === 'auth/operation-not-supported-in-this-environment') return 'Este entorno no permite popup directo.';
+  if (code === 'auth/internal-error') return 'Error interno de autenticacion. Intenta de nuevo.';
   if (code === 'auth/network-request-failed') return 'La red fallo. Revisa tu conexion.';
   return '';
 }
 
+function setLoginButtonBusy(isBusy) {
+  const btn = document.getElementById('btn-google');
+  if (!btn) return;
+  btn.disabled = !!isBusy;
+  btn.textContent = isBusy ? 'Conectando con Google...' : 'Entrar con Google';
+}
+
 async function doGoogleLogin(auth) {
+  if (loginInFlight) return;
+  loginInFlight = true;
+  setLoginButtonBusy(true);
+
   const provider = new GoogleAuthProvider();
   provider.setCustomParameters({ prompt: 'select_account' });
 
   try {
     await setPersistence(auth, browserLocalPersistence);
+    try {
+      await signInWithPopup(auth, provider);
+      return;
+    } catch (popupError) {
+      const popupCode = popupError?.code || '';
+      const shouldFallbackToRedirect = popupCode === 'auth/popup-blocked'
+        || popupCode === 'auth/cancelled-popup-request'
+        || popupCode === 'auth/operation-not-supported-in-this-environment';
+      if (!shouldFallbackToRedirect) throw popupError;
 
-    if (isStandalone()) {
       await signInWithRedirect(auth, provider);
       return;
     }
-
-    await signInWithPopup(auth, provider);
   } catch (error) {
     const code = error?.code || '';
     if (code === 'auth/popup-closed-by-user') return;
@@ -1063,6 +1083,9 @@ async function doGoogleLogin(auth) {
     const friendly = friendlyAuthError(code);
     toast(friendly ? `No se pudo iniciar sesion: ${friendly}` : 'No se pudo iniciar sesion.');
     console.error('Login error:', error);
+  } finally {
+    loginInFlight = false;
+    setLoginButtonBusy(false);
   }
 }
 
