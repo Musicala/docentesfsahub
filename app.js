@@ -1,6 +1,6 @@
-'use strict';
+﻿'use strict';
 
-const BUILD = '2026-04-11.1';
+const BUILD = '2026-04-20.1';
 
 const firebaseConfig = {
   apiKey: 'AIzaSyCO8QV3OTNLFmaeVjJ7tDDL9vbiEoiIsLk',
@@ -38,6 +38,8 @@ const HUB = {
     bitacoraAcademica: '',
     documentosContratacion: '',
     horarioAnual: '',
+    galeriaEvidencias: '',
+    puntualidadEquipo: '',
     bitacoraClases: ''
   },
   users: {
@@ -68,9 +70,11 @@ const HUB = {
     { id: 'jornada', icon: '⏱️', title: 'Registro de jornada', subtitle: 'Marca tu entrada', section: 'Operacion diaria' },
     { id: 'infoEstudiantes', icon: '🧒', title: 'Info estudiantes', subtitle: 'Base por area', section: 'Operacion diaria' },
     { id: 'horarioAnual', icon: '📅', title: 'Horario anual 2026', subtitle: 'General o personal', section: 'Operacion diaria' },
+    { id: 'puntualidadEquipo', icon: '⏱', title: 'Puntualidad equipo', subtitle: 'Lectura de marcajes', section: 'Operacion diaria' },
     { id: 'observacion', icon: '👀', title: 'Formulario observacion docente', subtitle: 'Registro externo', section: 'Gestion docente' },
     { id: 'asistencia', icon: '📝', title: 'Asistencia', subtitle: 'Formulario interno', section: 'Gestion docente' },
     { id: 'bitacoraClases', icon: '📒', title: 'Bitacora de clases', subtitle: 'Ver, agregar o editar', section: 'Gestion docente' },
+    { id: 'galeriaEvidencias', icon: '🖼️', title: 'Galeria de evidencias', subtitle: 'Fotos compartidas', section: 'Gestion docente' },
     { id: 'bitacoraAcademica', icon: '✅', title: 'Bitacora tareas academicas', subtitle: 'Pendiente', section: 'Gestion docente' },
     { id: 'induccion', icon: '🎓', title: 'Induccion Docentes Musicala', subtitle: 'Onboarding', section: 'Recursos' },
     { id: 'protocolosMusica', icon: '🎵', title: 'Protocolos clases de musica', subtitle: 'Guia', section: 'Recursos' },
@@ -91,7 +95,10 @@ const COLLECTIONS = {
   teacherShifts: 'teacherShifts',
   students: 'students',
   attendance: 'attendanceSessions',
-  classLogs: 'classLogs'
+  classLogs: 'classLogs',
+  calendarEvents: 'calendarEvents',
+  schedules: 'leaderSchedules',
+  galleryImages: 'galleryImages'
 };
 
 const SHIFT = {
@@ -100,8 +107,14 @@ const SHIFT = {
   LOOKBACK_DAYS: 30
 };
 
-const INTERNAL_BUTTONS = new Set(['carnet', 'jornada', 'infoEstudiantes', 'asistencia', 'bitacoraClases']);
-const CORE_BUTTON_IDS = ['jornada', 'infoEstudiantes', 'asistencia', 'bitacoraClases'];
+const INTERNAL_BUTTONS = new Set([
+  'carnet',
+  'jornada',
+  'infoEstudiantes',
+  'asistencia',
+  'bitacoraClases'
+]);
+const CORE_BUTTON_IDS = ['jornada', 'calendario', 'horarioAnual', 'infoEstudiantes', 'asistencia', 'bitacoraClases'];
 const MODAL_IDS = ['modal-search', 'modal-favorites', 'modal-workspace'];
 const ATTENDANCE_STATUSES = [
   { value: 'presente', label: 'Asistio' },
@@ -174,6 +187,14 @@ const DATA_STATE = {
   attendanceLoaded: false,
   logs: [],
   logsLoaded: false,
+  calendar: [],
+  calendarLoaded: false,
+  schedules: [],
+  schedulesLoaded: false,
+  punctuality: [],
+  punctualityLoaded: false,
+  gallery: [],
+  galleryLoaded: false,
   recentIds: []
 };
 
@@ -192,6 +213,10 @@ const MODULE_STATE = {
     editingId: '',
     showGallery: false,
     galleryAreaId: 'all'
+  },
+  calendar: {
+    year: String(new Date().getFullYear()),
+    month: String(new Date().getMonth() + 1)
   }
 };
 
@@ -1059,6 +1084,14 @@ function clearDataState() {
   DATA_STATE.attendanceLoaded = false;
   DATA_STATE.logs = [];
   DATA_STATE.logsLoaded = false;
+  DATA_STATE.calendar = [];
+  DATA_STATE.calendarLoaded = false;
+  DATA_STATE.schedules = [];
+  DATA_STATE.schedulesLoaded = false;
+  DATA_STATE.punctuality = [];
+  DATA_STATE.punctualityLoaded = false;
+  DATA_STATE.gallery = [];
+  DATA_STATE.galleryLoaded = false;
   DATA_STATE.recentIds = [];
 
   MODULE_STATE.current = '';
@@ -1070,6 +1103,8 @@ function clearDataState() {
   MODULE_STATE.logs.editingId = '';
   MODULE_STATE.logs.showGallery = false;
   MODULE_STATE.logs.galleryAreaId = 'all';
+  MODULE_STATE.calendar.year = String(new Date().getFullYear());
+  MODULE_STATE.calendar.month = String(new Date().getMonth() + 1);
 }
 
 async function doLogout(auth) {
@@ -1620,6 +1655,98 @@ async function loadLogs(force = false) {
   }
 }
 
+function normalizeCalendarEntry(docData = {}, id = '') {
+  const startRaw = String(docData.startAt || docData.startDate || docData.date || '').trim();
+  const endRaw = String(docData.endAt || docData.endDate || '').trim();
+  const startDate = startRaw ? new Date(startRaw) : null;
+  const endDate = endRaw ? new Date(endRaw) : null;
+  const safeStart = startDate && !Number.isNaN(startDate.getTime()) ? startDate : null;
+  const safeEnd = endDate && !Number.isNaN(endDate.getTime()) ? endDate : null;
+  return {
+    id,
+    title: String(docData.title || docData.name || 'Evento').trim(),
+    areaId: String(docData.areaId || '').trim(),
+    place: String(docData.place || docData.location || '').trim(),
+    notes: String(docData.notes || docData.description || '').trim(),
+    startAt: safeStart ? safeStart.toISOString() : '',
+    endAt: safeEnd ? safeEnd.toISOString() : '',
+    date: safeStart ? safeStart.toISOString().slice(0, 10) : String(docData.date || '').trim(),
+    updatedAtClient: Number(docData.updatedAtClient || docData.createdAtClient || 0) || 0
+  };
+}
+
+async function loadCalendar(force = false) {
+  if (!DB || !CURRENT_USER) return [];
+  if (DATA_STATE.calendarLoaded && !force) return DATA_STATE.calendar;
+  try {
+    const snap = await getDocs(collection(DB, COLLECTIONS.calendarEvents));
+    DATA_STATE.calendar = sortByDateDesc(
+      snap.docs.map((docSnap) => normalizeCalendarEntry(docSnap.data() || {}, docSnap.id))
+    );
+    DATA_STATE.calendarLoaded = true;
+    syncShellUi();
+    return DATA_STATE.calendar;
+  } catch (error) {
+    console.error('No se pudo cargar calendario:', error);
+    toast('No pude cargar el calendario compartido.');
+    return [];
+  }
+}
+
+async function loadSchedules(force = false) {
+  if (!DB || !CURRENT_USER) return [];
+  if (DATA_STATE.schedulesLoaded && !force) return DATA_STATE.schedules;
+  try {
+    const snap = await getDocs(collection(DB, COLLECTIONS.schedules));
+    DATA_STATE.schedules = snap.docs
+      .map((docSnap) => ({ id: docSnap.id, ...(docSnap.data() || {}) }))
+      .sort((a, b) => String(a.day || '').localeCompare(String(b.day || ''), 'es', { sensitivity: 'base' }));
+    DATA_STATE.schedulesLoaded = true;
+    syncShellUi();
+    return DATA_STATE.schedules;
+  } catch (error) {
+    console.error('No se pudo cargar horarios:', error);
+    toast('No pude cargar el horario compartido.');
+    return [];
+  }
+}
+
+async function loadPunctuality(force = false) {
+  if (!DB || !CURRENT_USER) return [];
+  if (DATA_STATE.punctualityLoaded && !force) return DATA_STATE.punctuality;
+  try {
+    const snap = await getDocs(collection(DB, COLLECTIONS.teacherShifts));
+    DATA_STATE.punctuality = snap.docs
+      .map((docSnap) => ({ id: docSnap.id, ...(docSnap.data() || {}) }))
+      .sort((a, b) => Number(b.updatedAtClient || b.createdAtClient || 0) - Number(a.updatedAtClient || a.createdAtClient || 0));
+    DATA_STATE.punctualityLoaded = true;
+    syncShellUi();
+    return DATA_STATE.punctuality;
+  } catch (error) {
+    console.error('No se pudo cargar puntualidad:', error);
+    toast('No pude cargar la puntualidad del equipo.');
+    return [];
+  }
+}
+
+async function loadGallery(force = false) {
+  if (!DB || !CURRENT_USER) return [];
+  if (DATA_STATE.galleryLoaded && !force) return DATA_STATE.gallery;
+  try {
+    const snap = await getDocs(collection(DB, COLLECTIONS.galleryImages));
+    DATA_STATE.gallery = snap.docs
+      .map((docSnap) => ({ id: docSnap.id, ...(docSnap.data() || {}) }))
+      .sort((a, b) => Number(b.updatedAtClient || b.createdAtClient || 0) - Number(a.updatedAtClient || a.createdAtClient || 0));
+    DATA_STATE.galleryLoaded = true;
+    syncShellUi();
+    return DATA_STATE.gallery;
+  } catch (error) {
+    console.error('No se pudo cargar galeria:', error);
+    toast('No pude cargar la galeria de evidencias.');
+    return [];
+  }
+}
+
 function computeAttendanceTotals(entries = []) {
   const totals = {
     presente: 0,
@@ -1762,6 +1889,50 @@ function getButtonMeta(button, links) {
     };
   }
 
+  if (button.id === 'calendario') {
+    const count = DATA_STATE.calendarLoaded ? DATA_STATE.calendar.length : 0;
+    return {
+      title: button.title,
+      subtitle: DATA_STATE.calendarLoaded ? `${count} eventos cargados` : 'Agenda institucional compartida',
+      badgeHtml: '<span class="badge ok">Abrir</span>',
+      cls: 'tile',
+      disabled: false
+    };
+  }
+
+  if (button.id === 'horarioAnual') {
+    const count = DATA_STATE.schedulesLoaded ? DATA_STATE.schedules.length : 0;
+    return {
+      title: button.title,
+      subtitle: DATA_STATE.schedulesLoaded ? `${count} bloques de horario` : 'Consulta horario compartido',
+      badgeHtml: '<span class="badge ok">Abrir</span>',
+      cls: 'tile',
+      disabled: false
+    };
+  }
+
+  if (button.id === 'puntualidadEquipo') {
+    const count = DATA_STATE.punctualityLoaded ? DATA_STATE.punctuality.length : 0;
+    return {
+      title: button.title,
+      subtitle: DATA_STATE.punctualityLoaded ? `${count} marcajes` : 'Lectura de registros del equipo',
+      badgeHtml: '<span class="badge ok">Abrir</span>',
+      cls: 'tile',
+      disabled: false
+    };
+  }
+
+  if (button.id === 'galeriaEvidencias') {
+    const count = DATA_STATE.galleryLoaded ? DATA_STATE.gallery.length : 0;
+    return {
+      title: button.title,
+      subtitle: DATA_STATE.galleryLoaded ? `${count} imagenes` : 'Consulta evidencias visuales',
+      badgeHtml: '<span class="badge ok">Abrir</span>',
+      cls: 'tile',
+      disabled: false
+    };
+  }
+
   const url = String(links?.[button.id] || '').trim();
   const pending = !url;
   return {
@@ -1893,6 +2064,8 @@ function updateHeroSummary() {
   const heroStudentsCount = document.getElementById('hero-students-count');
   const heroAttendanceCount = document.getElementById('hero-attendance-count');
   const heroLogsCount = document.getElementById('hero-logs-count');
+  const heroCalendarCount = document.getElementById('hero-calendar-count');
+  const heroScheduleCount = document.getElementById('hero-schedule-count');
   const heroShiftBtn = document.getElementById('btn-hero-shift');
   const pendingFocusBtn = document.getElementById('btn-pending-shift');
   const pendingBanner = document.getElementById('pending-shift-banner');
@@ -1902,7 +2075,7 @@ function updateHeroSummary() {
   if (heroSummary) {
     const who = ACTIVE_PROFILE?.label || prettyName(CURRENT_USER, ACTIVE_EMAIL);
     const areaText = areaLabels.length ? areaLabels.join(' / ') : 'Sin area asignada';
-    heroSummary.textContent = `${who}. Accede primero a jornada, estudiantes, asistencia y bitacoras. Tus herramientas secundarias quedan abajo.`;
+    heroSummary.textContent = `${who}. Accede primero a jornada, calendario, horario y seguimiento docente desde este panel.`;
   }
 
   if (heroAreaList) {
@@ -1915,6 +2088,8 @@ function updateHeroSummary() {
   if (heroStudentsCount) heroStudentsCount.textContent = String(DATA_STATE.students.length || 0);
   if (heroAttendanceCount) heroAttendanceCount.textContent = String(DATA_STATE.attendance.length || 0);
   if (heroLogsCount) heroLogsCount.textContent = String(DATA_STATE.logs.length || 0);
+  if (heroCalendarCount) heroCalendarCount.textContent = String(DATA_STATE.calendar.length || 0);
+  if (heroScheduleCount) heroScheduleCount.textContent = String(DATA_STATE.schedules.length || 0);
   if (heroShiftBtn) heroShiftBtn.textContent = SHIFT_STATE.pending ? 'Revisar jornada' : model.title;
   if (pendingFocusBtn) pendingFocusBtn.hidden = !SHIFT_STATE.pending;
   if (pendingBannerBtn) pendingBannerBtn.hidden = false;
@@ -2632,6 +2807,255 @@ function renderLogsModule() {
   `;
 }
 
+const ADMIN_EMAILS = new Set([
+  'alekcaballeromusic@gmail.com',
+  'catalina.medina.leal@gmail.com'
+]);
+
+function isAdminUser() {
+  return ADMIN_EMAILS.has(String(ACTIVE_EMAIL || '').toLowerCase());
+}
+
+function normalizeDayLabel(value) {
+  const raw = String(value || '').trim().toLowerCase();
+  if (!raw) return '';
+  const clean = raw.normalize('NFD').replace(/[\u0300-\u036f]/g, '');
+  const map = {
+    lunes: 'Lunes',
+    martes: 'Martes',
+    miercoles: 'Miercoles',
+    jueves: 'Jueves',
+    viernes: 'Viernes',
+    sabado: 'Sabado',
+    domingo: 'Domingo'
+  };
+  return map[clean] || String(value || '').trim();
+}
+
+function timeToMinutes(value) {
+  const text = String(value || '').trim();
+  const match = text.match(/^(\d{1,2}):(\d{2})$/);
+  if (!match) return Number.POSITIVE_INFINITY;
+  const hh = Number(match[1]);
+  const mm = Number(match[2]);
+  return (hh * 60) + mm;
+}
+
+function renderCalendarModule() {
+  const year = Number(MODULE_STATE.calendar.year) || new Date().getFullYear();
+  const month = Math.min(12, Math.max(1, Number(MODULE_STATE.calendar.month) || (new Date().getMonth() + 1)));
+  const monthStart = new Date(year, month - 1, 1);
+  const monthEnd = new Date(year, month, 0);
+  const daysInMonth = monthEnd.getDate();
+
+  const items = DATA_STATE.calendar.filter((item) => {
+    const src = item.startAt || item.date;
+    if (!src) return false;
+    const d = new Date(src);
+    return !Number.isNaN(d.getTime()) && d.getFullYear() === year && (d.getMonth() + 1) === month;
+  });
+
+  const byDate = new Map();
+  for (const item of items) {
+    const src = item.startAt || item.date;
+    const d = new Date(src);
+    if (Number.isNaN(d.getTime())) continue;
+    const key = d.toISOString().slice(0, 10);
+    if (!byDate.has(key)) byDate.set(key, []);
+    byDate.get(key).push(item);
+  }
+
+  for (const [, list] of byDate.entries()) {
+    list.sort((a, b) => timeToMinutes(a.startAt ? formatHourFromIso(a.startAt) : '') - timeToMinutes(b.startAt ? formatHourFromIso(b.startAt) : ''));
+  }
+
+  const weekdayShift = (monthStart.getDay() + 6) % 7;
+  const totalCells = Math.ceil((weekdayShift + daysInMonth) / 7) * 7;
+  const weekdayLabels = ['Lun', 'Mar', 'Mie', 'Jue', 'Vie', 'Sab', 'Dom'];
+  const cells = [];
+
+  for (let i = 0; i < totalCells; i += 1) {
+    const dayNumber = i - weekdayShift + 1;
+    const inMonth = dayNumber >= 1 && dayNumber <= daysInMonth;
+
+    if (!inMonth) {
+      cells.push('<div class="calendarCell is-empty" aria-hidden="true"></div>');
+      continue;
+    }
+
+    const iso = new Date(year, month - 1, dayNumber).toISOString().slice(0, 10);
+    const dayEvents = byDate.get(iso) || [];
+
+    cells.push(`
+      <div class="calendarCell">
+        <div class="calendarDay">${escapeHtml(String(dayNumber))}</div>
+        <div class="calendarEvents">
+          ${dayEvents.slice(0, 3).map((eventItem) => `
+            <button class="calendarChip" type="button" title="${escapeHtml(eventItem.title || 'Evento')}">
+              ${escapeHtml(eventItem.startAt ? formatHourFromIso(eventItem.startAt) : '--:--')} - ${escapeHtml(eventItem.title || 'Evento')}
+            </button>
+          `).join('')}
+          ${dayEvents.length > 3 ? `<span class="calendarMore">+${escapeHtml(String(dayEvents.length - 3))} mas</span>` : ''}
+        </div>
+      </div>
+    `);
+  }
+
+  return `
+    <div class="workspaceStack">
+      <section class="moduleSurface">
+        <div class="moduleSurfaceHead">
+          <div>
+            <h4 class="moduleTitle">Calendario compartido</h4>
+            <p class="moduleIntro">Vista conectada al mismo calendario institucional.</p>
+          </div>
+          <span class="statusPill statusInfo">${escapeHtml(String(items.length))} evento(s)</span>
+        </div>
+        <div class="formGrid">
+          <label class="field">
+            <span class="fieldLabel">Ano</span>
+            <input class="input" id="calendar-year" type="number" min="2020" max="2100" value="${escapeHtml(String(year))}" />
+          </label>
+          <label class="field">
+            <span class="fieldLabel">Mes</span>
+            <input class="input" id="calendar-month" type="number" min="1" max="12" value="${escapeHtml(String(month))}" />
+          </label>
+        </div>
+      </section>
+      <section class="moduleSurface">
+        ${items.length ? `
+          <div class="calendarWeekHead">
+            ${weekdayLabels.map((label) => `<span>${escapeHtml(label)}</span>`).join('')}
+          </div>
+          <div class="calendarGrid">${cells.join('')}</div>
+        ` : renderEmptyState('Sin eventos', 'No hay eventos para el mes seleccionado.')}
+      </section>
+    </div>
+  `;
+}
+
+function renderScheduleModule() {
+  const weekdays = ['Lunes', 'Martes', 'Miercoles', 'Jueves', 'Viernes', 'Sabado'];
+  const allItems = DATA_STATE.schedules || [];
+  const filteredItems = allItems.filter((item) => {
+    if (isAdminUser()) return true;
+    const teacherEmail = String(item.teacherEmail || item.email || '').trim().toLowerCase();
+    if (teacherEmail && teacherEmail === String(ACTIVE_EMAIL || '').toLowerCase()) return true;
+
+    const teacherName = String(item.teacherName || item.teacher || '').trim().toLowerCase();
+    const currentName = String(ACTIVE_PROFILE?.label || CURRENT_USER?.displayName || '').trim().toLowerCase();
+    return !!teacherName && !!currentName && teacherName === currentName;
+  });
+
+  const items = [...filteredItems].sort((a, b) => {
+    const dayA = weekdays.indexOf(normalizeDayLabel(a.day || a.dayLabel));
+    const dayB = weekdays.indexOf(normalizeDayLabel(b.day || b.dayLabel));
+    if (dayA !== dayB) return (dayA < 0 ? 99 : dayA) - (dayB < 0 ? 99 : dayB);
+    return timeToMinutes(a.startTime || a.start) - timeToMinutes(b.startTime || b.start);
+  });
+
+  const byDay = new Map(weekdays.map((day) => [day, []]));
+  for (const item of items) {
+    const day = normalizeDayLabel(item.day || item.dayLabel);
+    if (!byDay.has(day)) continue;
+    byDay.get(day).push(item);
+  }
+
+  return `
+    <div class="workspaceStack">
+      <section class="moduleSurface">
+        <div class="moduleSurfaceHead">
+          <div>
+            <h4 class="moduleTitle">Horario docente compartido</h4>
+            <p class="moduleIntro">${isAdminUser() ? 'Vista global de horarios del equipo docente.' : 'Vista personalizada de tu horario semanal.'}</p>
+          </div>
+          <span class="statusPill statusInfo">${escapeHtml(String(items.length))} bloque(s) ${isAdminUser() ? 'totales' : 'asignados'}</span>
+        </div>
+
+        ${items.length ? `
+        <div class="scheduleTable">
+          ${weekdays.map((day) => `
+            <section class="scheduleDayCol">
+              <header class="scheduleDayHead">${escapeHtml(day)}</header>
+              <div class="scheduleDayBody">
+                ${(byDay.get(day) || []).length ? (byDay.get(day) || []).map((item) => `
+                  <article class="scheduleBlock">
+                    <div class="scheduleBlockTime">${escapeHtml(item.startTime || item.start || '--:--')} - ${escapeHtml(item.endTime || item.end || '--:--')}</div>
+                    <div class="scheduleBlockTitle">${escapeHtml(isAdminUser() ? (item.teacherName || item.teacher || 'Docente') : (item.areaName || getAreaLabel(item.areaId) || 'General'))}</div>
+                    <div class="scheduleBlockMeta">${escapeHtml(item.place || item.siteName || 'Sede por confirmar')}</div>
+                  </article>
+                `).join('') : `<div class="scheduleEmpty">Sin bloques</div>`}
+              </div>
+            </section>
+          `).join('')}
+        </div>
+        ` : renderEmptyState('Sin bloques', isAdminUser() ? 'Todavia no hay horarios compartidos para mostrar.' : 'Aun no tienes bloques asignados en el horario compartido.')}
+      </section>
+    </div>
+  `;
+}
+
+function renderPunctualityModule() {
+  const items = DATA_STATE.punctuality || [];
+  return `
+    <div class="workspaceStack">
+      <section class="moduleSurface">
+        <div class="moduleSurfaceHead">
+          <div>
+            <h4 class="moduleTitle">Puntualidad del equipo</h4>
+            <p class="moduleIntro">Lectura de marcajes de entrada y salida registrados en el sistema.</p>
+          </div>
+          <span class="statusPill statusInfo">${escapeHtml(String(items.length))} registro(s)</span>
+        </div>
+        <div class="moduleList">
+          ${items.length ? items.map((item) => `
+            <article class="recordCard">
+              <div class="recordCardTop">
+                <div>
+                  <div class="recordTitle">${escapeHtml(item.teacherName || item.teacherEmail || 'Docente')}</div>
+                  <div class="recordMeta">${escapeHtml(formatDateLabel(item.date || ''))}</div>
+                </div>
+                <span class="statusPill ${item.status === 'open' ? 'statusWarn' : 'statusOk'}">${escapeHtml(item.status || 'sin estado')}</span>
+              </div>
+              <div class="recordBody">
+                Entrada: ${escapeHtml(item.checkIn ? formatDateTimeFromIso(item.checkIn) : 'Sin registro')} ·
+                Salida: ${escapeHtml(item.checkOut ? formatDateTimeFromIso(item.checkOut) : 'Sin cierre')}
+              </div>
+            </article>
+          `).join('') : renderEmptyState('Sin registros', 'No hay marcajes disponibles en este momento.')}
+        </div>
+      </section>
+    </div>
+  `;
+}
+
+function renderSharedGalleryModule() {
+  const items = (DATA_STATE.gallery || []).filter((item) => item.url || item.imageUrl || item.photoUrl);
+  return `
+    <div class="workspaceStack">
+      <section class="moduleSurface">
+        <div class="moduleSurfaceHead">
+          <div>
+            <h4 class="moduleTitle">Galeria de evidencias</h4>
+            <p class="moduleIntro">Consulta de imagenes compartidas por el equipo.</p>
+          </div>
+          <span class="statusPill statusInfo">${escapeHtml(String(items.length))} imagen(es)</span>
+        </div>
+        ${items.length ? `
+          <div class="galleryGrid">
+            ${items.map((item, index) => `
+              <a class="galleryCard" href="${escapeHtml(item.url || item.imageUrl || item.photoUrl || '')}" target="_blank" rel="noreferrer">
+                <img src="${escapeHtml(item.url || item.imageUrl || item.photoUrl || '')}" alt="Evidencia ${escapeHtml(String(index + 1))}" loading="lazy" />
+                <span class="galleryMeta">${escapeHtml(item.title || item.caption || item.areaName || 'Evidencia')}</span>
+              </a>
+            `).join('')}
+          </div>
+        ` : renderEmptyState('Sin imagenes', 'Aun no hay evidencias cargadas en la galeria compartida.')}
+      </section>
+    </div>
+  `;
+}
+
 const MODULE_CONFIG = {
   shift: {
     eyebrow: 'Operacion diaria',
@@ -2656,6 +3080,30 @@ const MODULE_CONFIG = {
     title: 'Bitacora de clases',
     subtitle: 'Consulta, agrega o edita bitacoras guardadas en Firebase.',
     render: renderLogsModule
+  },
+  calendar: {
+    eyebrow: 'Institucional',
+    title: 'Calendario academico',
+    subtitle: 'Eventos compartidos entre lideres y docentes.',
+    render: renderCalendarModule
+  },
+  schedule: {
+    eyebrow: 'Operacion diaria',
+    title: 'Horario docentes',
+    subtitle: 'Consulta de horario compartido.',
+    render: renderScheduleModule
+  },
+  punctuality: {
+    eyebrow: 'Operacion diaria',
+    title: 'Puntualidad equipo',
+    subtitle: 'Lectura de marcajes del equipo docente.',
+    render: renderPunctualityModule
+  },
+  sharedGallery: {
+    eyebrow: 'Evidencias',
+    title: 'Galeria de evidencias',
+    subtitle: 'Consulta visual compartida.',
+    render: renderSharedGalleryModule
   }
 };
 
@@ -2703,6 +3151,22 @@ async function openWorkspaceModule(moduleId) {
     MODULE_STATE.logs.areaId = userCanAccessArea(MODULE_STATE.logs.areaId) ? MODULE_STATE.logs.areaId : getPrimaryAreaId();
   }
 
+  if (moduleId === 'calendar') {
+    await loadCalendar();
+  }
+
+  if (moduleId === 'schedule') {
+    await loadSchedules();
+  }
+
+  if (moduleId === 'punctuality') {
+    await loadPunctuality();
+  }
+
+  if (moduleId === 'sharedGallery') {
+    await loadGallery();
+  }
+
   renderWorkspaceModule();
   openModal('modal-workspace');
 }
@@ -2724,6 +3188,22 @@ async function refreshActiveModule() {
 
   if (MODULE_STATE.current === 'logs') {
     await loadLogs(true);
+  }
+
+  if (MODULE_STATE.current === 'calendar') {
+    await loadCalendar(true);
+  }
+
+  if (MODULE_STATE.current === 'schedule') {
+    await loadSchedules(true);
+  }
+
+  if (MODULE_STATE.current === 'punctuality') {
+    await loadPunctuality(true);
+  }
+
+  if (MODULE_STATE.current === 'sharedGallery') {
+    await loadGallery(true);
   }
 
   renderWorkspaceModule();
@@ -3047,6 +3527,17 @@ function bindWorkspaceModal() {
       MODULE_STATE.logs.galleryAreaId = target.value || 'all';
       renderWorkspaceModule();
     }
+
+    if (target.id === 'calendar-year') {
+      MODULE_STATE.calendar.year = String(target.value || new Date().getFullYear());
+      renderWorkspaceModule();
+      return;
+    }
+
+    if (target.id === 'calendar-month') {
+      MODULE_STATE.calendar.month = String(target.value || (new Date().getMonth() + 1));
+      renderWorkspaceModule();
+    }
   });
 
   content.addEventListener('submit', async (event) => {
@@ -3114,6 +3605,26 @@ async function triggerAccess(id) {
     return;
   }
 
+  if (accessId === 'calendario') {
+    await openWorkspaceModule('calendar');
+    return;
+  }
+
+  if (accessId === 'horarioAnual') {
+    await openWorkspaceModule('schedule');
+    return;
+  }
+
+  if (accessId === 'puntualidadEquipo') {
+    await openWorkspaceModule('punctuality');
+    return;
+  }
+
+  if (accessId === 'galeriaEvidencias') {
+    await openWorkspaceModule('sharedGallery');
+    return;
+  }
+
   const url = String(ACTIVE_LINKS?.[accessId] || '').trim();
   if (!url || url === '__SHIFT__') {
     toast(`Pendiente: falta configurar el acceso de "${accessId}".`);
@@ -3127,6 +3638,8 @@ async function triggerAccess(id) {
 
 function wireHeroActions() {
   document.getElementById('btn-hero-shift')?.addEventListener('click', () => triggerAccess('jornada'));
+  document.getElementById('btn-hero-calendar')?.addEventListener('click', () => triggerAccess('calendario'));
+  document.getElementById('btn-hero-schedule')?.addEventListener('click', () => triggerAccess('horarioAnual'));
   document.getElementById('btn-hero-students')?.addEventListener('click', () => triggerAccess('infoEstudiantes'));
   document.getElementById('btn-hero-attendance')?.addEventListener('click', () => triggerAccess('asistencia'));
   document.getElementById('btn-hero-logs')?.addEventListener('click', () => triggerAccess('bitacoraClases'));
@@ -3264,7 +3777,15 @@ async function mount() {
     }
 
     await refreshShiftState();
-    await Promise.all([loadStudents(true), loadAttendance(true), loadLogs(true)]);
+    await Promise.all([
+      loadStudents(true),
+      loadAttendance(true),
+      loadLogs(true),
+      loadCalendar(true),
+      loadSchedules(true),
+      loadPunctuality(true),
+      loadGallery(true)
+    ]);
     syncShellUi();
     renderFavoritesList();
   });
@@ -3279,3 +3800,4 @@ document.addEventListener('DOMContentLoaded', () => {
   setNetPill();
   mount();
 });
+
