@@ -1,0 +1,28 @@
+rules_version = '2';
+service firebase.storage {
+  match /b/{bucket}/o {
+    function signedIn() {
+      return request.auth != null;
+    }
+
+    function isImageFile() {
+      return request.resource != null
+        && request.resource.contentType.matches('image/.*');
+    }
+
+    function underMaxSize() {
+      return request.resource != null
+        && request.resource.size < 8 * 1024 * 1024;
+    }
+
+    match /classLogs/{logId}/{fileName} {
+      allow read: if signedIn()
+        && exists(/databases/(default)/documents/classLogs/$(logId));
+
+      allow write: if signedIn()
+        && isImageFile()
+        && underMaxSize()
+        && exists(/databases/(default)/documents/classLogs/$(logId));
+    }
+  }
+}

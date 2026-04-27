@@ -1,6 +1,6 @@
 ﻿'use strict';
 
-const BUILD = '2026-04-20.1';
+const BUILD = '2026-04-27.1';
 
 const firebaseConfig = {
   apiKey: 'AIzaSyCO8QV3OTNLFmaeVjJ7tDDL9vbiEoiIsLk',
@@ -104,7 +104,8 @@ const COLLECTIONS = {
 const SHIFT = {
   COLLECTION: COLLECTIONS.teacherShifts,
   TIMEZONE: 'America/Bogota',
-  LOOKBACK_DAYS: 30
+  LOOKBACK_DAYS: 30,
+  QUEUE_KEY: 'docentes_fsa_shift_queue_v1'
 };
 
 const INTERNAL_BUTTONS = new Set([
@@ -176,7 +177,9 @@ const SHIFT_STATE = {
   docId: '',
   date: '',
   data: null,
-  pending: null
+  pending: null,
+  queuedCount: 0,
+  syncBusy: false
 };
 
 const DATA_STATE = {
@@ -999,32 +1002,39 @@ function setHubCopy() {
   if (drawerSub) drawerSub.textContent = HUB.subtitle;
 }
 
-function setNetPill() {
+function updateNetPillNow() {
   const pill = document.getElementById('net-pill');
-  if (!pill) return;
+  if (!pill) return null;
 
   const connection = navigator.connection || navigator.mozConnection || navigator.webkitConnection;
+  const online = navigator.onLine !== false;
+  let poor = false;
 
-  const update = () => {
-    const online = navigator.onLine !== false;
-    let poor = false;
+  if (connection && typeof connection.effectiveType === 'string') {
+    poor = /(^2g$|^3g$|slow-2g)/i.test(connection.effectiveType);
+  }
 
-    if (connection && typeof connection.effectiveType === 'string') {
-      poor = /(^2g$|^3g$|slow-2g)/i.test(connection.effectiveType);
-    }
+  pill.classList.toggle('offline', !online);
+  pill.classList.toggle('poor', online && poor);
 
-    pill.classList.toggle('offline', !online);
-    pill.classList.toggle('poor', online && poor);
+  const pending = SHIFT_STATE.queuedCount > 0 ? ` · ${SHIFT_STATE.queuedCount} por sync` : '';
+  if (!online) pill.textContent = `Offline${pending}`;
+  else if (poor) pill.textContent = `Conexion lenta${pending}`;
+  else pill.textContent = `Online${pending}`;
 
-    if (!online) pill.textContent = 'Offline';
-    else if (poor) pill.textContent = 'Conexion lenta';
-    else pill.textContent = 'Online';
-  };
+  return updateNetPillNow;
+}
 
-  update();
-  window.addEventListener('online', update);
-  window.addEventListener('offline', update);
-  connection?.addEventListener?.('change', update);
+function setNetPill() {
+  const connection = navigator.connection || navigator.mozConnection || navigator.webkitConnection;
+
+  updateNetPillNow();
+  window.addEventListener('online', () => {
+    updateNetPillNow();
+    replayShiftQueue({ silent: false });
+  });
+  window.addEventListener('offline', updateNetPillNow);
+  connection?.addEventListener?.('change', updateNetPillNow);
 }
 
 function prettyName(user, fallbackEmail = '') {
@@ -1097,6 +1107,8 @@ function clearShiftState() {
   SHIFT_STATE.date = '';
   SHIFT_STATE.data = null;
   SHIFT_STATE.pending = null;
+  SHIFT_STATE.queuedCount = 0;
+  SHIFT_STATE.syncBusy = false;
 }
 
 function clearDataState() {
@@ -1221,6 +1233,151 @@ function getShiftDocId(user, dateStr) {
   return `${uid}_${dateStr}`;
 }
 
+function getShiftQueue() {
+  const queue = lsGet(SHIFT.QUEUE_KEY, []);
+  return Array.isArray(queue) ? queue : [];
+}
+
+function setShiftQueue(queue) {
+  const safeQueue = Array.isArray(queue) ? queue : [];
+  lsSet(SHIFT.QUEUE_KEY, safeQueue);
+  SHIFT_STATE.queuedCount = safeQueue.filter((item) => item?.teacherId === CURRENT_USER?.uid).length;
+  applyShiftTileUi();
+  updateHeroSummary();
+  updateNetPillNow();
+}
+
+function getCurrentShiftQueue() {
+  return getShiftQueue().filter((item) => item?.teacherId === CURRENT_USER?.uid);
+}
+
+function refreshShiftQueueCount() {
+  SHIFT_STATE.queuedCount = getCurrentShiftQueue().length;
+  updateNetPillNow();
+}
+
+function mergeQueuedShiftState(remoteData = null, docId = '', date = '') {
+  let merged = remoteData ? { ...remoteData } : null;
+  const queue = getCurrentShiftQueue()
+    .filter((item) => item.docId === docId || item.date === date)
+    .sort((a, b) => Number(a.createdAtClient || 0) - Number(b.createdAtClient || 0));
+
+  for (const item of queue) {
+    if (item.type === 'openShift') {
+      merged = {
+        ...(merged || {}),
+        ...(item.payload || {}),
+        status: 'open',
+        checkOut: null,
+        queuedLocal: true
+      };
+    }
+
+    if (item.type === 'closeShift') {
+      merged = {
+        ...(merged || {}),
+        ...(item.payload || {}),
+        status: 'closed',
+        queuedLocal: true
+      };
+    }
+  }
+
+  if (merged && queue.length) merged.queuedLocal = true;
+  return merged;
+}
+
+function queueShiftOperation(operation) {
+  const queue = getShiftQueue();
+  const queued = {
+    id: `${Date.now()}_${Math.random().toString(16).slice(2)}`,
+    teacherId: CURRENT_USER?.uid || '',
+    teacherEmail: emailKey(CURRENT_USER),
+    createdAtClient: Date.now(),
+    ...operation
+  };
+
+  setShiftQueue([...queue, queued]);
+  return queued;
+}
+
+function isLikelyNetworkError(error) {
+  const code = String(error?.code || '').toLowerCase();
+  const message = String(error?.message || '').toLowerCase();
+  return !navigator.onLine
+    || code.includes('unavailable')
+    || code.includes('deadline-exceeded')
+    || code.includes('network')
+    || message.includes('network')
+    || message.includes('offline')
+    || message.includes('failed to get document');
+}
+
+async function replayShiftQueue({ silent = false } = {}) {
+  if (!DB || !CURRENT_USER || SHIFT_STATE.syncBusy) return false;
+
+  const fullQueue = getShiftQueue();
+  const ownQueue = fullQueue.filter((item) => item?.teacherId === CURRENT_USER.uid);
+  if (!ownQueue.length) {
+    refreshShiftQueueCount();
+    return true;
+  }
+
+  if (navigator.onLine === false) {
+    refreshShiftQueueCount();
+    return false;
+  }
+
+  SHIFT_STATE.syncBusy = true;
+  applyShiftTileUi();
+
+  const syncedIds = new Set();
+
+  try {
+    for (const item of ownQueue.sort((a, b) => Number(a.createdAtClient || 0) - Number(b.createdAtClient || 0))) {
+      if (!item?.docId) continue;
+      const ref = doc(DB, SHIFT.COLLECTION, item.docId);
+
+      if (item.type === 'openShift') {
+        await setDoc(ref, {
+          ...(item.payload || {}),
+          updatedAt: serverTimestamp(),
+          createdAt: serverTimestamp()
+        }, { merge: true });
+        syncedIds.add(item.id);
+      }
+
+      if (item.type === 'closeShift') {
+        await updateDoc(ref, {
+          ...(item.payload || {}),
+          updatedAt: serverTimestamp()
+        });
+        syncedIds.add(item.id);
+      }
+    }
+
+    if (syncedIds.size) {
+      setShiftQueue(fullQueue.filter((item) => !syncedIds.has(item.id)));
+      if (!silent) toast('Jornada sincronizada.');
+      await loadTodayShift();
+      await loadPendingShift();
+      if (MODULE_STATE.current === 'shift') renderWorkspaceModule();
+      syncShellUi();
+    }
+
+    return true;
+  } catch (error) {
+    console.warn('No se pudo sincronizar la cola de jornada:', error);
+    refreshShiftQueueCount();
+    if (!silent && !isLikelyNetworkError(error)) toast('Hay marcajes pendientes por sincronizar.');
+    return false;
+  } finally {
+    SHIFT_STATE.syncBusy = false;
+    applyShiftTileUi();
+    updateHeroSummary();
+  }
+}
+
 function getShiftUiModel() {
   if (SHIFT_STATE.loading) {
     return {
@@ -1229,6 +1386,17 @@ function getShiftUiModel() {
       badge: 'Cargando',
       classes: ['is-shift-loading'],
       disabled: true
+    };
+  }
+
+  if (SHIFT_STATE.queuedCount > 0) {
+    const data = SHIFT_STATE.data;
+    return {
+      title: data?.status === 'open' && !data?.checkOut ? 'Finalizar jornada' : 'Iniciar jornada',
+      subtitle: `${SHIFT_STATE.queuedCount} marcaje(s) pendiente(s) de sincronizar`,
+      badge: 'Pendiente sync',
+      classes: ['is-shift-warning'],
+      disabled: false
     };
   }
 
@@ -1313,6 +1481,7 @@ async function loadTodayShift() {
   if (!DB || !CURRENT_USER) return null;
 
   SHIFT_STATE.loading = true;
+  refreshShiftQueueCount();
   applyShiftTileUi();
 
   try {
@@ -1324,14 +1493,21 @@ async function loadTodayShift() {
     SHIFT_STATE.docId = docId;
     SHIFT_STATE.date = date;
     SHIFT_STATE.loaded = true;
-    SHIFT_STATE.data = snap.exists() ? snap.data() : null;
+    SHIFT_STATE.data = mergeQueuedShiftState(snap.exists() ? snap.data() : null, docId, date);
 
     return SHIFT_STATE.data;
   } catch (error) {
     console.error('No se pudo cargar la jornada de hoy:', error);
-    toast('No pude cargar el estado de tu jornada.');
-    SHIFT_STATE.loaded = false;
-    SHIFT_STATE.data = null;
+    const { date } = getBogotaDateParts(new Date());
+    const docId = getShiftDocId(CURRENT_USER, date);
+    const queuedData = mergeQueuedShiftState(null, docId, date);
+
+    SHIFT_STATE.docId = docId;
+    SHIFT_STATE.date = date;
+    SHIFT_STATE.loaded = !!queuedData;
+    SHIFT_STATE.data = queuedData;
+
+    if (!queuedData) toast('No pude cargar el estado de tu jornada.');
     return null;
   } finally {
     SHIFT_STATE.loading = false;
@@ -1370,6 +1546,8 @@ async function loadPendingShift() {
 }
 
 async function refreshShiftState() {
+  refreshShiftQueueCount();
+  await replayShiftQueue({ silent: true });
   await loadTodayShift();
   await loadPendingShift();
   syncShellUi();
@@ -1405,15 +1583,46 @@ async function openShift() {
     checkIn: nowIso,
     checkOut: null,
     status: 'open',
-    updatedAt: serverTimestamp(),
     updatedAtClient: nowClient
   };
 
-  await setDoc(doc(DB, SHIFT.COLLECTION, docId), {
-    ...payload,
-    createdAt: serverTimestamp(),
-    createdAtClient: nowClient
-  }, { merge: true });
+  if (navigator.onLine === false) {
+    queueShiftOperation({
+      type: 'openShift',
+      docId,
+      date,
+      payload: {
+        ...payload,
+        createdAtClient: nowClient
+      }
+    });
+    applyLocalOpenShift(payload, docId, date);
+    toast('Jornada iniciada en este dispositivo. Se sincronizara cuando vuelva internet.');
+    return;
+  }
+
+  try {
+    await setDoc(doc(DB, SHIFT.COLLECTION, docId), {
+      ...payload,
+      createdAt: serverTimestamp(),
+      createdAtClient: nowClient
+    }, { merge: true });
+  } catch (error) {
+    if (!isLikelyNetworkError(error)) throw error;
+
+    queueShiftOperation({
+      type: 'openShift',
+      docId,
+      date,
+      payload: {
+        ...payload,
+        createdAtClient: nowClient
+      }
+    });
+    applyLocalOpenShift(payload, docId, date);
+    toast('Jornada iniciada en este dispositivo. Se sincronizara cuando vuelva internet.');
+    return;
+  }
 
   SHIFT_STATE.docId = docId;
   SHIFT_STATE.date = date;
@@ -1421,6 +1630,16 @@ async function openShift() {
   SHIFT_STATE.data = payload;
 
   toast('Jornada iniciada.');
+}
+
+function applyLocalOpenShift(payload, docId, date) {
+  SHIFT_STATE.docId = docId;
+  SHIFT_STATE.date = date;
+  SHIFT_STATE.loaded = true;
+  SHIFT_STATE.data = {
+    ...payload,
+    queuedLocal: true
+  };
 }
 
 async function closeShift() {
@@ -1433,23 +1652,58 @@ async function closeShift() {
   const nowClient = Date.now();
   const ref = doc(DB, SHIFT.COLLECTION, SHIFT_STATE.docId);
 
-  await updateDoc(ref, {
-    checkOut: nowIso,
-    status: 'closed',
-    manuallyClosed: false,
-    updatedAt: serverTimestamp(),
-    updatedAtClient: nowClient
-  });
-
-  SHIFT_STATE.data = {
-    ...(SHIFT_STATE.data || {}),
+  const payload = {
     checkOut: nowIso,
     status: 'closed',
     manuallyClosed: false,
     updatedAtClient: nowClient
   };
 
+  if (navigator.onLine === false) {
+    queueShiftOperation({
+      type: 'closeShift',
+      docId: SHIFT_STATE.docId,
+      date: SHIFT_STATE.date || getBogotaDateParts().date,
+      payload
+    });
+    applyLocalCloseShift(payload);
+    toast('Jornada finalizada en este dispositivo. Se sincronizara cuando vuelva internet.');
+    return;
+  }
+
+  try {
+    await updateDoc(ref, {
+      ...payload,
+      updatedAt: serverTimestamp()
+    });
+  } catch (error) {
+    if (!isLikelyNetworkError(error)) throw error;
+
+    queueShiftOperation({
+      type: 'closeShift',
+      docId: SHIFT_STATE.docId,
+      date: SHIFT_STATE.date || getBogotaDateParts().date,
+      payload
+    });
+    applyLocalCloseShift(payload);
+    toast('Jornada finalizada en este dispositivo. Se sincronizara cuando vuelva internet.');
+    return;
+  }
+
+  SHIFT_STATE.data = {
+    ...(SHIFT_STATE.data || {}),
+    ...payload
+  };
+
   toast('Jornada finalizada.');
+}
+
+function applyLocalCloseShift(payload) {
+  SHIFT_STATE.data = {
+    ...(SHIFT_STATE.data || {}),
+    ...payload,
+    queuedLocal: true
+  };
 }
 
 async function closePendingShift(formData) {
@@ -1475,29 +1729,51 @@ async function closePendingShift(formData) {
 
   const ref = doc(DB, SHIFT.COLLECTION, pending.id);
   const nowClient = Date.now();
-
-  await updateDoc(ref, {
+  const payload = {
     checkOut: manualIso,
     status: 'closed',
     manuallyClosed: true,
     manualCloseNote: note || '',
-    updatedAt: serverTimestamp(),
     updatedAtClient: nowClient
-  });
+  };
+  let queuedForSync = false;
+
+  if (navigator.onLine === false) {
+    queueShiftOperation({
+      type: 'closeShift',
+      docId: pending.id,
+      date: pending.date || '',
+      payload
+    });
+    queuedForSync = true;
+  } else {
+    try {
+      await updateDoc(ref, {
+        ...payload,
+        updatedAt: serverTimestamp()
+      });
+    } catch (error) {
+      if (!isLikelyNetworkError(error)) throw error;
+      queueShiftOperation({
+        type: 'closeShift',
+        docId: pending.id,
+        date: pending.date || '',
+        payload
+      });
+      queuedForSync = true;
+    }
+  }
 
   if (SHIFT_STATE.docId === pending.id) {
     SHIFT_STATE.data = {
       ...(SHIFT_STATE.data || {}),
-      checkOut: manualIso,
-      status: 'closed',
-      manuallyClosed: true,
-      manualCloseNote: note || '',
-      updatedAtClient: nowClient
+      ...payload,
+      queuedLocal: queuedForSync
     };
   }
 
   SHIFT_STATE.pending = null;
-  toast('Sesion pendiente cerrada.');
+  toast(queuedForSync ? 'Cierre guardado en este dispositivo. Se sincronizara cuando vuelva internet.' : 'Sesion pendiente cerrada.');
 
   await refreshShiftState();
   if (MODULE_STATE.current === 'shift') renderWorkspaceModule();
