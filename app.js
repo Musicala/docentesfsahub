@@ -1,6 +1,6 @@
 ﻿'use strict';
 
-const BUILD = '2026-04-27.1';
+const BUILD = '2026-05-02.1';
 
 const firebaseConfig = {
   apiKey: 'AIzaSyCO8QV3OTNLFmaeVjJ7tDDL9vbiEoiIsLk',
@@ -51,11 +51,6 @@ const HUB = {
     'catalina.medina.leal@gmail.com': {
       label: 'Catalina Medina',
       carnet: './assets/catalinamedina.png',
-      areaIds: ['musica', 'danzas', 'porras']
-    },
-    'musicalaasesor@gmail.com': {
-      label: 'Administrativos',
-      carnet: '',
       areaIds: ['musica', 'danzas', 'porras']
     },
     'eryck1214@gmail.com': {
@@ -277,6 +272,39 @@ function getTeacherDisplayName(user = CURRENT_USER, profile = ACTIVE_PROFILE) {
   return String(profile?.label || user?.displayName || user?.email || 'Docente').trim();
 }
 
+function profileCanUseAllAreas(profile = ACTIVE_PROFILE) {
+  const roles = Array.isArray(profile?.roles) ? profile.roles : [];
+  return profile?.role === 'admin'
+    || profile?.role === 'lider'
+    || roles.includes('admin')
+    || roles.includes('lider');
+}
+
+function normalizeTeacherProfile(raw = {}, user = CURRENT_USER) {
+  const email = String(raw.email || user?.email || '').trim().toLowerCase();
+  const rawAreaIds = Array.isArray(raw.areaIds)
+    ? raw.areaIds
+    : (Array.isArray(raw.areas) ? raw.areas : [raw.areaId || raw.area || raw.primaryAreaId].filter(Boolean));
+  const areaIds = rawAreaIds.map((areaId) => String(areaId || '').trim()).filter((areaId) => HUB.areas?.[areaId]);
+  const roles = Array.isArray(raw.roles)
+    ? raw.roles.map((role) => String(role || '').trim().toLowerCase()).filter(Boolean)
+    : [];
+  const role = String(raw.role || '').trim().toLowerCase();
+
+  if (role && !roles.includes(role)) roles.push(role);
+
+  return {
+    ...raw,
+    email,
+    label: String(raw.label || raw.name || user?.displayName || user?.email || 'Docente').trim(),
+    carnet: String(raw.carnet || raw.cardUrl || '').trim(),
+    areaIds,
+    roles,
+    role,
+    active: raw.active !== false
+  };
+}
+
 function getBogotaDateParts(date = new Date()) {
   const formatter = new Intl.DateTimeFormat('en-CA', {
     timeZone: SHIFT.TIMEZONE,
@@ -413,9 +441,13 @@ function getAreaLabel(areaId) {
 }
 
 function getAllowedAreaIds(profile = ACTIVE_PROFILE) {
+  if (profileCanUseAllAreas(profile)) return Object.keys(HUB.areas || {});
+
   const defined = Array.isArray(profile?.areaIds) ? profile.areaIds : [];
   const valid = defined.filter((areaId) => HUB.areas?.[areaId]);
   if (valid.length) return valid;
+
+  if (profile || hasUserRestrictions()) return [];
 
   const fallback = Object.keys(HUB.areas || {});
   return fallback.length ? [fallback[0]] : [];
@@ -1190,15 +1222,53 @@ function hasUserRestrictions() {
   return HUB.users && Object.keys(HUB.users).length > 0;
 }
 
+async function loadTeacherProfile(user) {
+  if (!DB || !user) return null;
+
+  const email = emailKey(user);
+  const localProfile = HUB.users?.[email] ? normalizeTeacherProfile(HUB.users[email], user) : null;
+  const teacherRef = doc(DB, COLLECTIONS.teacherProfiles, user.uid);
+  const teacherSnap = await getDoc(teacherRef).catch((error) => {
+    console.warn('No se pudo leer el perfil docente:', error);
+    return null;
+  });
+
+  if (teacherSnap?.exists()) {
+    return normalizeTeacherProfile({
+      ...(localProfile || {}),
+      ...teacherSnap.data(),
+      uid: user.uid,
+      email
+    }, user);
+  }
+
+  const userRef = doc(DB, 'users', email);
+  const userSnap = await getDoc(userRef).catch((error) => {
+    console.warn('No se pudo leer el perfil de acceso:', error);
+    return null;
+  });
+
+  if (userSnap?.exists()) {
+    return normalizeTeacherProfile({
+      ...(localProfile || {}),
+      ...userSnap.data(),
+      uid: user.uid,
+      email
+    }, user);
+  }
+
+  return localProfile;
+}
+
 function buildLinksForUser(email) {
   const base = { ...(HUB.generalLinks || {}) };
-  const profile = HUB.users?.[email] || null;
+  const profile = ACTIVE_PROFILE || HUB.users?.[email] || null;
   const overrides = profile?.links || {};
   return { ...base, ...overrides };
 }
 
 async function syncTeacherProfile(user, profile) {
-  if (!DB || !user || !profile) return null;
+  if (!DB || !user || !profile || !HUB.users?.[emailKey(user)]) return profile || null;
 
   const ref = doc(DB, COLLECTIONS.teacherProfiles, user.uid);
   const existing = await getDoc(ref).catch(() => null);
@@ -3117,7 +3187,8 @@ const ADMIN_EMAILS = new Set([
 ]);
 
 function isAdminUser() {
-  return ADMIN_EMAILS.has(String(ACTIVE_EMAIL || '').toLowerCase());
+  return ADMIN_EMAILS.has(String(ACTIVE_EMAIL || '').toLowerCase())
+    || profileCanUseAllAreas(ACTIVE_PROFILE);
 }
 
 function normalizeDayLabel(value) {
@@ -4036,19 +4107,12 @@ async function mount() {
     }
 
     const email = emailKey(user);
-    if (hasUserRestrictions() && !HUB.users[email]) {
-      toast('Tu correo no esta autorizado para este hub.');
-      try {
-        await signOut(auth);
-      } catch (_) {}
-      show('login');
-      closeDrawer();
-      return;
-    }
-
     CURRENT_USER = user;
     ACTIVE_EMAIL = email;
-    ACTIVE_PROFILE = HUB.users[email] || null;
+    ACTIVE_PROFILE = await loadTeacherProfile(user);
+    if (!ACTIVE_PROFILE?.active || !getAllowedAreaIds(ACTIVE_PROFILE).length) {
+      toast('Tu perfil docente aun no tiene areas autorizadas. Pide a un lider que lo revise.');
+    }
     ACTIVE_LINKS = buildLinksForUser(email);
     DATA_STATE.recentIds = getRecentIds(email);
 
