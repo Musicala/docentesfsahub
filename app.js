@@ -53,6 +53,11 @@ const HUB = {
       carnet: './assets/catalinamedina.png',
       areaIds: ['musica', 'danzas', 'porras']
     },
+    'musicalaasesor@gmail.com': {
+      label: 'Administrativos',
+      carnet: '',
+      areaIds: ['musica', 'danzas', 'porras']
+    },
     'eryck1214@gmail.com': {
       label: 'Eryck Martinez',
       carnet: '',
