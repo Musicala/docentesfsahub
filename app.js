@@ -1,6 +1,6 @@
 ﻿'use strict';
 
-const BUILD = '2026-05-02.1';
+const BUILD = '2026-05-19.1';
 
 const firebaseConfig = {
   apiKey: 'AIzaSyCO8QV3OTNLFmaeVjJ7tDDL9vbiEoiIsLk',
@@ -107,6 +107,12 @@ const SHIFT = {
   LOOKBACK_DAYS: 30,
   QUEUE_KEY: 'docentes_fsa_shift_queue_v1'
 };
+
+// URL del Web App de Google Apps Script para notificar inicios de jornada.
+// Debe desplegarse y autorizarse desde imusicaladocente@gmail.com para que ese sea el remitente real.
+const SHIFT_EMAIL_WEBAPP_URL = 'https://script.google.com/macros/s/AKfycbwW217m9SSl3vNrR_19_61-goCGt59GDkYyfi6ZdndZBuFIqVL6v_W1u5DLFTb-EL9tQQ/exec';
+// Proteccion basica: este token vive en el frontend publico, no reemplaza reglas ni seguridad fuerte.
+const SHIFT_EMAIL_APP_TOKEN = 'docentesfsa';
 
 const INTERNAL_BUTTONS = new Set([
   'carnet',
@@ -1414,11 +1420,13 @@ async function replayShiftQueue({ silent = false } = {}) {
       const ref = doc(DB, SHIFT.COLLECTION, item.docId);
 
       if (item.type === 'openShift') {
+        const payload = item.payload || {};
         await setDoc(ref, {
-          ...(item.payload || {}),
+          ...payload,
           updatedAt: serverTimestamp(),
           createdAt: serverTimestamp()
         }, { merge: true });
+        await sendShiftStartEmailNotification(payload, item.docId);
         syncedIds.add(item.id);
       }
 
@@ -1636,6 +1644,83 @@ async function refreshShiftState() {
   }
 }
 
+function isShiftEmailWebappConfigured() {
+  return /^https:\/\/script\.google\.com\/macros\/s\//i.test(String(SHIFT_EMAIL_WEBAPP_URL || '').trim());
+}
+
+function buildShiftEmailPayload(shiftData = {}, shiftId = '') {
+  const checkIn = shiftData.checkIn || '';
+  return {
+    token: SHIFT_EMAIL_APP_TOKEN,
+    eventType: 'SHIFT_STARTED',
+    shiftId,
+    teacherName: shiftData.teacherName || getTeacherDisplayName(),
+    teacherEmail: shiftData.teacherEmail || emailKey(CURRENT_USER),
+    date: shiftData.date || getBogotaDateParts().date,
+    checkIn,
+    modality: shiftData.modality || shiftData.modalidad || shiftData.type || shiftData.source || '',
+    createdAt: checkIn ? formatDateTimeFromIso(checkIn) : new Date().toLocaleString('es-CO', { timeZone: SHIFT.TIMEZONE })
+  };
+}
+
+async function updateShiftEmailStatus(shiftId, data) {
+  if (!DB || !shiftId) return;
+  try {
+    await updateDoc(doc(DB, SHIFT.COLLECTION, shiftId), data);
+  } catch (error) {
+    console.warn('No se pudo actualizar el estado del correo de jornada:', error);
+  }
+}
+
+// Flujo secundario de notificacion: nunca debe bloquear el marcaje de llegada.
+async function sendShiftStartEmailNotification(shiftData, shiftId) {
+  if (!DB || !shiftId) return false;
+
+  if (!isShiftEmailWebappConfigured()) {
+    console.warn('Notificacion de jornada no enviada: falta configurar SHIFT_EMAIL_WEBAPP_URL.');
+    return false;
+  }
+
+  try {
+    const ref = doc(DB, SHIFT.COLLECTION, shiftId);
+    const snap = await getDoc(ref);
+    const remoteData = snap.exists() ? snap.data() : {};
+
+    if (remoteData?.arrivalEmailStatus === 'sent') return true;
+
+    const response = await fetch(SHIFT_EMAIL_WEBAPP_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'text/plain;charset=utf-8' },
+      body: JSON.stringify(buildShiftEmailPayload({ ...remoteData, ...(shiftData || {}) }, shiftId))
+    });
+
+    let result = {};
+    try {
+      result = await response.json();
+    } catch (error) {
+      result = { ok: response.ok, error: 'Respuesta no JSON del Web App' };
+    }
+
+    if (!response.ok || result?.ok !== true) {
+      throw new Error(result?.error || `HTTP ${response.status}`);
+    }
+
+    await updateShiftEmailStatus(shiftId, {
+      arrivalEmailStatus: 'sent',
+      arrivalEmailSentAt: serverTimestamp(),
+      arrivalEmailError: ''
+    });
+    return true;
+  } catch (error) {
+    console.warn('No se pudo enviar el correo de inicio de jornada:', error);
+    await updateShiftEmailStatus(shiftId, {
+      arrivalEmailStatus: 'failed',
+      arrivalEmailError: String(error?.message || error || 'Error desconocido')
+    });
+    return false;
+  }
+}
+
 async function openShift() {
   if (!DB || !CURRENT_USER) {
     toast('No hay una sesion activa para registrar jornada.');
@@ -1647,6 +1732,7 @@ async function openShift() {
   const { date } = getBogotaDateParts(now);
   const docId = getShiftDocId(CURRENT_USER, date);
   const nowClient = Date.now();
+  const previousArrivalEmailSent = SHIFT_STATE.data?.arrivalEmailStatus === 'sent';
 
   const payload = {
     teacherId: CURRENT_USER.uid,
@@ -1660,6 +1746,12 @@ async function openShift() {
     status: 'open',
     updatedAtClient: nowClient
   };
+
+  if (!previousArrivalEmailSent) {
+    payload.arrivalEmailStatus = 'pending';
+    payload.arrivalEmailSentAt = null;
+    payload.arrivalEmailError = '';
+  }
 
   if (navigator.onLine === false) {
     queueShiftOperation({
@@ -1682,6 +1774,7 @@ async function openShift() {
       createdAt: serverTimestamp(),
       createdAtClient: nowClient
     }, { merge: true });
+    await sendShiftStartEmailNotification(payload, docId);
   } catch (error) {
     if (!isLikelyNetworkError(error)) throw error;
 
