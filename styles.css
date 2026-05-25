@@ -1504,6 +1504,61 @@ button[data-id="jornada"].is-shift-ready::after{
   font-weight: 850;
   margin-bottom: 8px;
 }
+
+.segmentedRow{
+  display:flex;
+  flex-wrap:wrap;
+  gap: 8px;
+  margin: 12px 0;
+}
+.segmentBtn{
+  appearance:none;
+  border: 1px solid rgba(11,16,32,.12);
+  background: rgba(255,255,255,.78);
+  color: rgba(11,16,32,.78);
+  border-radius: 14px;
+  min-height: 40px;
+  padding: 8px 12px;
+  font-weight: 900;
+  cursor:pointer;
+  box-shadow: 0 10px 22px rgba(11,16,32,.08);
+}
+.segmentBtn.is-active{
+  border-color: rgba(12,65,196,.26);
+  background: rgba(12,65,196,.10);
+  color: #0C41C4;
+}
+.recordFilters{
+  display:grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  padding: 12px;
+  margin: 12px 0;
+  border: 1px solid rgba(11,16,32,.10);
+  border-radius: 18px;
+  background: rgba(255,255,255,.62);
+}
+.monthlyReminder{
+  margin-top: 12px;
+  align-items:center;
+}
+.monthlyReminderActions{
+  display:flex;
+  flex-wrap:wrap;
+  gap: 8px;
+  justify-content:flex-end;
+}
+@media (max-width: 720px){
+  .recordFilters{
+    grid-template-columns: 1fr;
+  }
+  .monthlyReminder{
+    align-items:stretch;
+  }
+  .monthlyReminderActions{
+    justify-content:flex-start;
+  }
+}
 .input{
   width: 100%;
   height: 44px;
@@ -2360,6 +2415,14 @@ body{
   aspect-ratio: 1 / 1;
   object-fit: cover;
   display: block;
+}
+
+.formPhotoLink video{
+  width: 100%;
+  aspect-ratio: 1 / 1;
+  object-fit: cover;
+  display: block;
+  background: rgba(16,34,58,.08);
 }
 
 .logGallerySection{

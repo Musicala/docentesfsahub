@@ -1,6 +1,7 @@
 ﻿'use strict';
 
-const BUILD = '2026-05-19.1';
+const BUILD = '2026-05-25.1';
+const SW_RELOAD_KEY = `docentes_fsa_sw_reloaded_${BUILD}`;
 
 const firebaseConfig = {
   apiKey: 'AIzaSyCO8QV3OTNLFmaeVjJ7tDDL9vbiEoiIsLk',
@@ -74,6 +75,11 @@ const HUB = {
     { id: 'observacion', icon: '👀', title: 'Formulario observacion docente', subtitle: 'Registro externo', section: 'Gestion docente' },
     { id: 'asistencia', icon: '📝', title: 'Asistencia', subtitle: 'Formulario interno', section: 'Gestion docente' },
     { id: 'bitacoraClases', icon: '📒', title: 'Bitacora de clases', subtitle: 'Ver, agregar o editar', section: 'Gestion docente' },
+    { id: 'diagnosticos', icon: '🧭', title: 'Diagnosticos', subtitle: 'Inicio de grupo o proceso', section: 'Gestion docente' },
+    { id: 'proyectos', icon: '🗂️', title: 'Proyectos semestrales', subtitle: 'Planeacion por semestre', section: 'Gestion docente' },
+    { id: 'muestrasProceso', icon: '🎥', title: 'Muestras de proceso', subtitle: 'Evidencia fotografica y video', section: 'Gestion docente' },
+    { id: 'registrosDocentes', icon: '📚', title: 'Todos los registros', subtitle: 'Vista general y filtros', section: 'Gestion docente' },
+    { id: 'informesMensuales', icon: '📆', title: 'Informes mensuales', subtitle: 'Entrega mensual del proceso', section: 'Gestion docente' },
     { id: 'galeriaEvidencias', icon: '🖼️', title: 'Galeria de evidencias', subtitle: 'Fotos compartidas', section: 'Gestion docente' },
     { id: 'bitacoraAcademica', icon: '✅', title: 'Bitacora tareas academicas', subtitle: 'Pendiente', section: 'Gestion docente' },
     { id: 'induccion', icon: '🎓', title: 'Induccion Docentes Musicala', subtitle: 'Onboarding', section: 'Recursos' },
@@ -96,6 +102,10 @@ const COLLECTIONS = {
   students: 'students',
   attendance: 'attendanceSessions',
   classLogs: 'classLogs',
+  diagnostics: 'diagnosticos',
+  projects: 'proyectos',
+  processSamples: 'muestrasProceso',
+  monthlyReports: 'informesMensuales',
   calendarEvents: 'calendarEvents',
   schedules: 'leaderSchedules',
   galleryImages: 'galleryImages'
@@ -148,6 +158,7 @@ import {
   collection,
   doc,
   getDoc,
+  getDocFromServer,
   getDocs,
   setDoc,
   addDoc,
@@ -175,6 +186,90 @@ let ACTIVE_PROFILE = null;
 let ACTIVE_EMAIL = '';
 const LOG_PHOTO_LIMIT = 8;
 const LOG_PHOTO_MAX_BYTES = 8 * 1024 * 1024;
+const RECORD_PHOTO_LIMIT = 8;
+const RECORD_PHOTO_MAX_BYTES = 8 * 1024 * 1024;
+const RECORD_MEDIA_MAX_BYTES = 50 * 1024 * 1024;
+const MONTHLY_REMINDER_DISMISS_PREFIX = 'docentes_fsa_monthly_reminder_dismissed_';
+
+const TEACHER_RECORD_TYPES = {
+  diagnosticos: {
+    collection: COLLECTIONS.diagnostics,
+    module: 'teacherRecords',
+    type: 'diagnostico',
+    label: 'Diagnostico',
+    plural: 'Diagnosticos',
+    dateField: 'date',
+    fields: [
+      { name: 'date', label: 'Fecha', type: 'date', required: true },
+      { name: 'centerGroupProcess', label: 'Centro / grupo / proceso', required: true },
+      { name: 'studentsOrGroup', label: 'Estudiante(s) o grupo', required: true },
+      { name: 'areaId', label: 'Area artistica', type: 'area', required: true },
+      { name: 'diagnosticObservations', label: 'Observaciones diagnosticas', type: 'textarea', required: true },
+      { name: 'strengths', label: 'Fortalezas identificadas', type: 'textarea' },
+      { name: 'improvementAreas', label: 'Aspectos por fortalecer', type: 'textarea' },
+      { name: 'recommendations', label: 'Recomendaciones', type: 'textarea' }
+    ]
+  },
+  proyectos: {
+    collection: COLLECTIONS.projects,
+    module: 'teacherRecords',
+    type: 'proyecto',
+    label: 'Proyecto',
+    plural: 'Proyectos',
+    dateField: 'date',
+    fields: [
+      { name: 'date', label: 'Fecha', type: 'date', required: true },
+      { name: 'centerGroupProcess', label: 'Centro / grupo / proceso', required: true },
+      { name: 'projectName', label: 'Nombre del proyecto', required: true },
+      { name: 'areaId', label: 'Area artistica', type: 'area', required: true },
+      { name: 'projectObjective', label: 'Objetivo del proyecto', type: 'textarea', required: true },
+      { name: 'description', label: 'Descripcion', type: 'textarea' },
+      { name: 'progress', label: 'Avances', type: 'textarea' },
+      { name: 'nextSteps', label: 'Proximos pasos', type: 'textarea' }
+    ]
+  },
+  muestrasProceso: {
+    collection: COLLECTIONS.processSamples,
+    module: 'teacherRecords',
+    type: 'muestraProceso',
+    label: 'Muestra de proceso',
+    plural: 'Muestras de proceso',
+    dateField: 'date',
+    evidenceLabel: 'Evidencia fotografica y videos',
+    evidenceAccept: 'image/*,video/*',
+    evidenceRequired: true,
+    evidenceHint: 'Carga fotos o videos del resultado del proyecto. Maximo 50MB por archivo.',
+    fields: [
+      { name: 'date', label: 'Fecha', type: 'date', required: true },
+      { name: 'centerGroupProcess', label: 'Centro / grupo / proceso', required: true },
+      { name: 'areaId', label: 'Area artistica', type: 'area', required: true },
+      { name: 'sampleDescription', label: 'Descripcion de la muestra', type: 'textarea', required: true },
+      { name: 'observedProgress', label: 'Avances observados', type: 'textarea' },
+      { name: 'participants', label: 'Participantes', type: 'textarea' },
+      { name: 'pedagogicalObservations', label: 'Observaciones pedagogicas', type: 'textarea' }
+    ]
+  },
+  informesMensuales: {
+    collection: COLLECTIONS.monthlyReports,
+    module: 'monthlyReports',
+    type: 'informeMensual',
+    label: 'Informe mensual',
+    plural: 'Informes mensuales',
+    dateField: 'month',
+    fields: [
+      { name: 'month', label: 'Mes del informe', type: 'month', required: true },
+      { name: 'date', label: 'Fecha de diligenciamiento', type: 'date', required: true },
+      { name: 'centerGroupProcess', label: 'Centro / grupo / proceso', required: true },
+      { name: 'areaId', label: 'Area artistica', type: 'area', required: true },
+      { name: 'monthlySummary', label: 'Resumen del proceso del mes', type: 'textarea', required: true },
+      { name: 'mainAchievements', label: 'Logros principales', type: 'textarea' },
+      { name: 'difficulties', label: 'Dificultades encontradas', type: 'textarea' },
+      { name: 'relevantStudents', label: 'Estudiantes destacados o situaciones relevantes', type: 'textarea' },
+      { name: 'nextMonthRecommendations', label: 'Recomendaciones para el siguiente mes', type: 'textarea' },
+      { name: 'needsOrAlerts', label: 'Necesidades o alertas', type: 'textarea' }
+    ]
+  }
+};
 
 const SHIFT_STATE = {
   loading: false,
@@ -196,6 +291,18 @@ const DATA_STATE = {
   attendanceLoaded: false,
   logs: [],
   logsLoaded: false,
+  teacherRecords: {
+    diagnosticos: [],
+    proyectos: [],
+    muestrasProceso: [],
+    informesMensuales: []
+  },
+  teacherRecordsLoaded: {
+    diagnosticos: false,
+    proyectos: false,
+    muestrasProceso: false,
+    informesMensuales: false
+  },
   calendar: [],
   calendarLoaded: false,
   schedules: [],
@@ -222,6 +329,27 @@ const MODULE_STATE = {
     editingId: '',
     showGallery: false,
     galleryAreaId: 'all'
+  },
+  teacherRecords: {
+    activeType: 'diagnosticos',
+    editingId: '',
+    filters: {
+      month: '',
+      teacher: '',
+      center: '',
+      type: 'all',
+      areaId: 'all'
+    }
+  },
+  monthlyReports: {
+    editingId: '',
+    areaId: '',
+    filters: {
+      month: getBogotaDateParts().date.slice(0, 7),
+      teacher: '',
+      center: '',
+      areaId: 'all'
+    }
   },
   calendar: {
     year: String(new Date().getFullYear()),
@@ -334,6 +462,14 @@ function getBogotaDateParts(date = new Date()) {
 
 function getBogotaDateDaysAgo(daysAgo = 0) {
   return getBogotaDateParts(new Date(Date.now() - daysAgo * 86400000)).date;
+}
+
+function getCurrentMonthKey() {
+  return getBogotaDateParts().date.slice(0, 7);
+}
+
+function getCurrentBogotaDayNumber() {
+  return Number(getBogotaDateParts().day || 0) || 0;
 }
 
 function formatDateLabel(dateStr) {
@@ -723,15 +859,57 @@ async function trySkipWaiting() {
   return false;
 }
 
+function sortRecordsDesc(items) {
+  return [...items].sort((a, b) => {
+    const aDate = String(a?.month || a?.date || '');
+    const bDate = String(b?.month || b?.date || '');
+    if (aDate !== bDate) return aDate < bDate ? 1 : -1;
+    return Number(b?.updatedAtClient || b?.createdAtClient || 0) - Number(a?.updatedAtClient || a?.createdAtClient || 0);
+  });
+}
+
+async function clearAppCaches() {
+  if (!('caches' in window)) return;
+  try {
+    const keys = await caches.keys();
+    await Promise.allSettled(
+      keys
+        .filter((key) => /^(musicala-|fm-|ferma-|hub-)/i.test(key))
+        .map((key) => caches.delete(key))
+    );
+  } catch (error) {
+    console.warn('No se pudo limpiar CacheStorage:', error);
+  }
+}
+
+async function updateAppNow() {
+  toast('Actualizando app...');
+
+  try {
+    const registration = await navigator.serviceWorker?.getRegistration?.('./');
+    if (registration?.active) {
+      registration.active.postMessage({ type: 'CLEAR_CACHES' });
+    }
+    if (registration?.waiting) {
+      registration.waiting.postMessage({ type: 'SKIP_WAITING' });
+    }
+    await clearAppCaches();
+    await registration?.update?.();
+  } catch (error) {
+    console.warn('No se pudo forzar la actualizacion del service worker:', error);
+  }
+
+  const url = new URL(window.location.href);
+  url.searchParams.set('refresh', String(Date.now()));
+  window.location.replace(url.toString());
+}
+
 function wireUpdateBanner() {
   const wrap = document.getElementById('pwa-update');
   const btn = document.getElementById('btn-update');
   if (!wrap || !btn) return;
 
-  btn.addEventListener('click', async () => {
-    const ready = await trySkipWaiting();
-    if (!ready) toast('No hay una actualizacion lista todavia.');
-  });
+  btn.addEventListener('click', updateAppNow);
 
   if ('serviceWorker' in navigator) {
     navigator.serviceWorker.addEventListener('message', (event) => {
@@ -743,6 +921,8 @@ function wireUpdateBanner() {
 async function registerServiceWorker() {
   if (!('serviceWorker' in navigator)) return;
 
+  // iOS puede mantener una PWA abierta con un service worker viejo; por eso
+  // el registro usa URL versionada, evita caches del navegador y fuerza update al abrir.
   const promptUpdate = (registration) => {
     if (!registration?.waiting) return;
 
@@ -763,7 +943,10 @@ async function registerServiceWorker() {
   };
 
   try {
-    const registration = await navigator.serviceWorker.register('./sw.js', { scope: './' });
+    const registration = await navigator.serviceWorker.register(`./sw.js?v=${encodeURIComponent(BUILD)}`, {
+      scope: './',
+      updateViaCache: 'none'
+    });
 
     promptUpdate(registration);
 
@@ -773,6 +956,9 @@ async function registerServiceWorker() {
 
       worker.addEventListener('statechange', () => {
         if (worker.state === 'installed' && navigator.serviceWorker.controller) {
+          try {
+            worker.postMessage({ type: 'SKIP_WAITING' });
+          } catch (_) {}
           promptUpdate(registration);
         }
       });
@@ -781,9 +967,12 @@ async function registerServiceWorker() {
     navigator.serviceWorker.addEventListener('controllerchange', () => {
       if (window.__reloadingForSW) return;
       window.__reloadingForSW = true;
+      if (sessionStorage.getItem(SW_RELOAD_KEY) === '1') return;
+      sessionStorage.setItem(SW_RELOAD_KEY, '1');
       window.location.reload();
     });
 
+    if (registration.waiting) registration.waiting.postMessage({ type: 'SKIP_WAITING' });
     registration.update?.().catch(() => null);
   } catch (error) {
     console.warn('No se pudo registrar el service worker:', error);
@@ -1162,6 +1351,18 @@ function clearDataState() {
   DATA_STATE.attendanceLoaded = false;
   DATA_STATE.logs = [];
   DATA_STATE.logsLoaded = false;
+  DATA_STATE.teacherRecords = {
+    diagnosticos: [],
+    proyectos: [],
+    muestrasProceso: [],
+    informesMensuales: []
+  };
+  DATA_STATE.teacherRecordsLoaded = {
+    diagnosticos: false,
+    proyectos: false,
+    muestrasProceso: false,
+    informesMensuales: false
+  };
   DATA_STATE.calendar = [];
   DATA_STATE.calendarLoaded = false;
   DATA_STATE.schedules = [];
@@ -1181,6 +1382,12 @@ function clearDataState() {
   MODULE_STATE.logs.editingId = '';
   MODULE_STATE.logs.showGallery = false;
   MODULE_STATE.logs.galleryAreaId = 'all';
+  MODULE_STATE.teacherRecords.activeType = 'diagnosticos';
+  MODULE_STATE.teacherRecords.editingId = '';
+  MODULE_STATE.teacherRecords.filters = { month: '', teacher: '', center: '', type: 'all', areaId: 'all' };
+  MODULE_STATE.monthlyReports.editingId = '';
+  MODULE_STATE.monthlyReports.areaId = '';
+  MODULE_STATE.monthlyReports.filters = { month: getCurrentMonthKey(), teacher: '', center: '', areaId: 'all' };
   MODULE_STATE.calendar.year = String(new Date().getFullYear());
   MODULE_STATE.calendar.month = String(new Date().getMonth() + 1);
 }
@@ -1394,6 +1601,24 @@ function isLikelyNetworkError(error) {
     || message.includes('failed to get document');
 }
 
+function isNotFoundError(error) {
+  const code = String(error?.code || '').toLowerCase();
+  const message = String(error?.message || '').toLowerCase();
+  return code.includes('not-found') || message.includes('no document to update') || message.includes('not found');
+}
+
+async function getShiftDocSnapshot(ref, { preferServer = true } = {}) {
+  if (preferServer && navigator.onLine !== false) {
+    try {
+      return await getDocFromServer(ref);
+    } catch (error) {
+      console.warn('No se pudo leer jornada desde servidor, uso cache como respaldo:', error);
+    }
+  }
+
+  return getDoc(ref);
+}
+
 async function replayShiftQueue({ silent = false } = {}) {
   if (!DB || !CURRENT_USER || SHIFT_STATE.syncBusy) return false;
 
@@ -1431,9 +1656,10 @@ async function replayShiftQueue({ silent = false } = {}) {
       }
 
       if (item.type === 'closeShift') {
-        await updateDoc(ref, {
-          ...(item.payload || {}),
-          updatedAt: serverTimestamp()
+        await persistShiftClose(ref, item.payload || {}, {
+          docId: item.docId,
+          date: item.date,
+          baseData: item.baseData || null
         });
         syncedIds.add(item.id);
       }
@@ -1571,7 +1797,7 @@ async function loadTodayShift() {
     const { date } = getBogotaDateParts(new Date());
     const docId = getShiftDocId(CURRENT_USER, date);
     const ref = doc(DB, SHIFT.COLLECTION, docId);
-    const snap = await getDoc(ref);
+    const snap = await getShiftDocSnapshot(ref);
 
     SHIFT_STATE.docId = docId;
     SHIFT_STATE.date = date;
@@ -1609,7 +1835,7 @@ async function loadPendingShift() {
 
     try {
       const ref = doc(DB, SHIFT.COLLECTION, getShiftDocId(CURRENT_USER, date));
-      const snap = await getDoc(ref);
+      const snap = await getShiftDocSnapshot(ref);
 
       if (!snap.exists()) continue;
 
@@ -1810,6 +2036,43 @@ function applyLocalOpenShift(payload, docId, date) {
   };
 }
 
+function buildRecoveredClosedShift(payload = {}, options = {}) {
+  const { queuedLocal: _queuedLocal, ...baseData } = options.baseData || SHIFT_STATE.data || {};
+  const date = options.date || SHIFT_STATE.date || baseData.date || getBogotaDateParts().date;
+
+  return {
+    teacherId: baseData.teacherId || CURRENT_USER?.uid || '',
+    teacherEmail: baseData.teacherEmail || emailKey(CURRENT_USER),
+    teacherName: baseData.teacherName || getTeacherDisplayName(),
+    date,
+    timezone: baseData.timezone || SHIFT.TIMEZONE,
+    source: baseData.source || 'docentes-fsa-hub',
+    checkIn: baseData.checkIn || payload.checkIn || '',
+    ...baseData,
+    ...payload,
+    checkOut: payload.checkOut || baseData.checkOut || new Date().toISOString(),
+    status: 'closed',
+    updatedAt: serverTimestamp(),
+    updatedAtClient: payload.updatedAtClient || Date.now()
+  };
+}
+
+async function persistShiftClose(ref, payload = {}, options = {}) {
+  try {
+    await updateDoc(ref, {
+      ...payload,
+      updatedAt: serverTimestamp()
+    });
+  } catch (error) {
+    if (!isNotFoundError(error)) throw error;
+
+    const baseData = options.baseData || SHIFT_STATE.data || null;
+    if (!baseData?.checkIn) throw error;
+
+    await setDoc(ref, buildRecoveredClosedShift(payload, options), { merge: true });
+  }
+}
+
 async function closeShift() {
   if (!DB || !CURRENT_USER || !SHIFT_STATE.docId) {
     toast('No encontre una jornada abierta para cerrar.');
@@ -1826,13 +2089,15 @@ async function closeShift() {
     manuallyClosed: false,
     updatedAtClient: nowClient
   };
+  const baseData = SHIFT_STATE.data ? { ...SHIFT_STATE.data } : null;
 
   if (navigator.onLine === false) {
     queueShiftOperation({
       type: 'closeShift',
       docId: SHIFT_STATE.docId,
       date: SHIFT_STATE.date || getBogotaDateParts().date,
-      payload
+      payload,
+      baseData
     });
     applyLocalCloseShift(payload);
     toast('Jornada finalizada en este dispositivo. Se sincronizara cuando vuelva internet.');
@@ -1840,9 +2105,10 @@ async function closeShift() {
   }
 
   try {
-    await updateDoc(ref, {
-      ...payload,
-      updatedAt: serverTimestamp()
+    await persistShiftClose(ref, payload, {
+      docId: SHIFT_STATE.docId,
+      date: SHIFT_STATE.date || getBogotaDateParts().date,
+      baseData
     });
   } catch (error) {
     if (!isLikelyNetworkError(error)) throw error;
@@ -1851,7 +2117,8 @@ async function closeShift() {
       type: 'closeShift',
       docId: SHIFT_STATE.docId,
       date: SHIFT_STATE.date || getBogotaDateParts().date,
-      payload
+      payload,
+      baseData
     });
     applyLocalCloseShift(payload);
     toast('Jornada finalizada en este dispositivo. Se sincronizara cuando vuelva internet.');
@@ -1859,7 +2126,7 @@ async function closeShift() {
   }
 
   SHIFT_STATE.data = {
-    ...(SHIFT_STATE.data || {}),
+    ...(baseData || SHIFT_STATE.data || {}),
     ...payload
   };
 
@@ -1911,14 +2178,16 @@ async function closePendingShift(formData) {
       type: 'closeShift',
       docId: pending.id,
       date: pending.date || '',
-      payload
+      payload,
+      baseData: pending
     });
     queuedForSync = true;
   } else {
     try {
-      await updateDoc(ref, {
-        ...payload,
-        updatedAt: serverTimestamp()
+      await persistShiftClose(ref, payload, {
+        docId: pending.id,
+        date: pending.date || '',
+        baseData: pending
       });
     } catch (error) {
       if (!isLikelyNetworkError(error)) throw error;
@@ -1926,7 +2195,8 @@ async function closePendingShift(formData) {
         type: 'closeShift',
         docId: pending.id,
         date: pending.date || '',
-        payload
+        payload,
+        baseData: pending
       });
       queuedForSync = true;
     }
@@ -1955,22 +2225,23 @@ async function handleShiftButtonClick() {
 
   if (SHIFT_STATE.busy || SHIFT_STATE.loading) return;
 
-  if (SHIFT_STATE.pending) {
-    await openWorkspaceModule('shift');
-    return;
-  }
-
   SHIFT_STATE.busy = true;
   applyShiftTileUi();
 
   try {
-    if (!SHIFT_STATE.loaded) {
-      await loadTodayShift();
+    await replayShiftQueue({ silent: true });
+    await loadTodayShift();
+    await loadPendingShift();
+
+    if (SHIFT_STATE.pending) {
+      await openWorkspaceModule('shift');
+      return;
     }
 
     const data = SHIFT_STATE.data;
 
     if (data?.status === 'open' && data?.checkIn && !data?.checkOut) {
+      toast('Guardando cierre...');
       await closeShift();
     } else {
       await openShift();
@@ -1980,7 +2251,7 @@ async function handleShiftButtonClick() {
     if (MODULE_STATE.current === 'shift') renderWorkspaceModule();
   } catch (error) {
     console.error('Error guardando la jornada:', error);
-    toast('No pude guardar tu jornada. Revisa tu conexion.');
+    toast('No pude cerrar la jornada. Intenta actualizar estado o revisa conexion.');
   } finally {
     SHIFT_STATE.busy = false;
     applyShiftTileUi();
@@ -2120,6 +2391,40 @@ async function loadLogs(force = false) {
     toast('No pude cargar las bitacoras de clase.');
     return [];
   }
+}
+
+async function loadTeacherRecordType(typeKey, force = false) {
+  const config = TEACHER_RECORD_TYPES[typeKey];
+  if (!DB || !CURRENT_USER || !config) return [];
+  if (DATA_STATE.teacherRecordsLoaded[typeKey] && !force) return DATA_STATE.teacherRecords[typeKey] || [];
+
+  try {
+    const q = buildScopedQuery(config.collection);
+    if (!q) {
+      DATA_STATE.teacherRecords[typeKey] = [];
+      DATA_STATE.teacherRecordsLoaded[typeKey] = true;
+      syncShellUi();
+      return [];
+    }
+
+    const snap = await getDocs(q);
+    DATA_STATE.teacherRecords[typeKey] = sortRecordsDesc(
+      snap.docs.map((docSnap) => ({ id: docSnap.id, typeKey, ...docSnap.data() }))
+    );
+    DATA_STATE.teacherRecordsLoaded[typeKey] = true;
+    syncShellUi();
+    return DATA_STATE.teacherRecords[typeKey];
+  } catch (error) {
+    console.error(`No se pudo cargar ${typeKey}:`, error);
+    toast('No pude cargar esos registros docentes.');
+    return [];
+  }
+}
+
+async function loadTeacherRecords(types = Object.keys(TEACHER_RECORD_TYPES), force = false) {
+  const keys = Array.isArray(types) ? types : [types];
+  await Promise.all(keys.map((typeKey) => loadTeacherRecordType(typeKey, force)));
+  return keys.flatMap((typeKey) => DATA_STATE.teacherRecords[typeKey] || []);
 }
 
 function normalizeCalendarEntry(docData = {}, id = '') {
@@ -2351,6 +2656,40 @@ function getButtonMeta(button, links) {
       title: button.title,
       subtitle: DATA_STATE.logsLoaded ? `${count} bitacoras disponibles` : 'Consulta, crea y actualiza',
       badgeHtml: '<span class="badge ok">Abrir</span>',
+      cls: 'tile',
+      disabled: false
+    };
+  }
+
+  if (['diagnosticos', 'proyectos', 'muestrasProceso'].includes(button.id)) {
+    const count = DATA_STATE.teacherRecords[button.id]?.length || 0;
+    return {
+      title: button.title,
+      subtitle: DATA_STATE.teacherRecordsLoaded[button.id] ? `${count} registro(s)` : button.subtitle,
+      badgeHtml: '<span class="badge ok">Abrir</span>',
+      cls: 'tile',
+      disabled: false
+    };
+  }
+
+  if (button.id === 'registrosDocentes') {
+    const count = ['diagnosticos', 'proyectos', 'muestrasProceso']
+      .reduce((total, typeKey) => total + (DATA_STATE.teacherRecords[typeKey]?.length || 0), 0);
+    return {
+      title: button.title,
+      subtitle: count ? `${count} registros cargados` : 'Diagnosticos, proyectos y muestras',
+      badgeHtml: '<span class="badge ok">Abrir</span>',
+      cls: 'tile',
+      disabled: false
+    };
+  }
+
+  if (button.id === 'informesMensuales') {
+    const sent = (DATA_STATE.teacherRecords.informesMensuales || []).some((item) => item.teacherId === CURRENT_USER?.uid && item.month === getCurrentMonthKey());
+    return {
+      title: button.title,
+      subtitle: sent ? 'Informe del mes enviado' : 'Diligencia antes del dia 25',
+      badgeHtml: `<span class="badge ${sent ? 'ok' : ''}">${sent ? 'Listo' : 'Pendiente'}</span>`,
       cls: 'tile',
       disabled: false
     };
@@ -2748,6 +3087,11 @@ function wireDrawerHandlers(auth) {
 
     if (action === 'support') {
       openExternal('mailto:alekcaballeromusic@gmail.com?subject=Soporte%20Docentes%20Hub');
+      return;
+    }
+
+    if (action === 'refreshApp') {
+      await updateAppNow();
       return;
     }
 
@@ -3250,9 +3594,9 @@ function renderLogsModule() {
           </label>
 
           <label class="field fieldSpan2">
-            <span class="fieldLabel">Fotos de la sesion (hasta ${LOG_PHOTO_LIMIT})</span>
+            <span class="fieldLabel">Fotos de evidencia obligatorias (hasta ${LOG_PHOTO_LIMIT})</span>
             <input class="input" name="photos" type="file" accept="image/*" multiple />
-            <small class="fieldHint">Puedes cargar JPG, PNG o WEBP. Maximo ${Math.floor(LOG_PHOTO_MAX_BYTES / 1024 / 1024)}MB por imagen.</small>
+            <small class="fieldHint">Debes subir al menos una foto para guardar la bitacora. Maximo ${Math.floor(LOG_PHOTO_MAX_BYTES / 1024 / 1024)}MB por imagen.</small>
           </label>
 
           ${attachedPhotos.length ? `
@@ -3267,6 +3611,286 @@ function renderLogsModule() {
           <div class="formActions fieldSpan2">
             <button class="btnPrimary" type="submit">${draft.id ? 'Guardar bitacora' : 'Registrar bitacora'}</button>
             ${draft.id ? '<button class="btnGhost" type="button" data-module-action="log-new">Cancelar edicion</button>' : ''}
+          </div>
+        </form>
+      </section>
+    </div>
+  `;
+}
+
+function getRecordConfig(typeKey = MODULE_STATE.teacherRecords.activeType) {
+  return TEACHER_RECORD_TYPES[typeKey] || TEACHER_RECORD_TYPES.diagnosticos;
+}
+
+function getAllTeacherRecords() {
+  return Object.keys(TEACHER_RECORD_TYPES)
+    .flatMap((typeKey) => (DATA_STATE.teacherRecords[typeKey] || []).map((item) => ({ ...item, typeKey })));
+}
+
+function getRecordDraft(typeKey = MODULE_STATE.teacherRecords.activeType, editingId = MODULE_STATE.teacherRecords.editingId) {
+  const config = getRecordConfig(typeKey);
+  const editing = (DATA_STATE.teacherRecords[typeKey] || []).find((item) => item.id === editingId);
+  const base = {};
+  for (const field of config.fields) {
+    if (field.name === 'areaId') base.areaId = userCanAccessArea(MODULE_STATE.monthlyReports.areaId || MODULE_STATE.logs.areaId) ? (MODULE_STATE.monthlyReports.areaId || MODULE_STATE.logs.areaId) : getPrimaryAreaId();
+    else if (field.type === 'date') base[field.name] = getBogotaDateParts().date;
+    else if (field.type === 'month') base[field.name] = getCurrentMonthKey();
+    else base[field.name] = '';
+  }
+
+  return {
+    id: '',
+    typeKey,
+    type: config.type,
+    photos: [],
+    ...base,
+    ...(editing || {})
+  };
+}
+
+function renderRecordField(field, draft) {
+  const value = draft[field.name] ?? '';
+  if (field.type === 'area') {
+    return `
+      <label class="field">
+        <span class="fieldLabel">${escapeHtml(field.label)}</span>
+        <select class="input" name="${escapeHtml(field.name)}" ${field.required ? 'required' : ''}>
+          ${renderAreaOptions({ includeAll: false, selected: value || getPrimaryAreaId() })}
+        </select>
+      </label>
+    `;
+  }
+
+  if (field.type === 'textarea') {
+    return `
+      <label class="field fieldSpan2">
+        <span class="fieldLabel">${escapeHtml(field.label)}</span>
+        <textarea class="input textareaInput" name="${escapeHtml(field.name)}" rows="4" ${field.required ? 'required' : ''}>${escapeHtml(value)}</textarea>
+      </label>
+    `;
+  }
+
+  return `
+    <label class="field${field.type === 'text' ? ' fieldSpan2' : ''}">
+      <span class="fieldLabel">${escapeHtml(field.label)}</span>
+      <input class="input" name="${escapeHtml(field.name)}" type="${escapeHtml(field.type || 'text')}" autocomplete="off" ${field.required ? 'required' : ''} value="${escapeHtml(value)}" />
+    </label>
+  `;
+}
+
+function getRecordTitle(record) {
+  return record.projectName
+    || record.centerGroupProcess
+    || record.studentsOrGroup
+    || record.sampleDescription
+    || record.monthlySummary
+    || getRecordConfig(record.typeKey).label;
+}
+
+function recordMatchesFilters(record, filters = {}) {
+  if (filters.type && filters.type !== 'all' && record.typeKey !== filters.type) return false;
+  if (filters.areaId && filters.areaId !== 'all' && record.areaId !== filters.areaId) return false;
+  if (filters.month) {
+    const key = String(record.month || record.date || '').slice(0, 7);
+    if (key !== filters.month) return false;
+  }
+  if (filters.teacher) {
+    const needle = filters.teacher.toLowerCase();
+    const hay = `${record.teacherName || ''} ${record.teacherEmail || ''}`.toLowerCase();
+    if (!hay.includes(needle)) return false;
+  }
+  if (filters.center) {
+    const needle = filters.center.toLowerCase();
+    if (!String(record.centerGroupProcess || '').toLowerCase().includes(needle)) return false;
+  }
+  return true;
+}
+
+function renderRecordCard(record, options = {}) {
+  const config = getRecordConfig(record.typeKey);
+  const photos = Array.isArray(record.photos) ? record.photos : [];
+  return `
+    <article class="recordCard">
+      <div class="recordCardTop">
+        <div>
+          <div class="recordTitle">${escapeHtml(getRecordTitle(record))}</div>
+          <div class="recordMeta">${escapeHtml([config.label, record.month || formatDateLabel(record.date || ''), record.areaName || getAreaLabel(record.areaId), record.teacherName].filter(Boolean).join(' · '))}</div>
+        </div>
+        ${options.canEdit ? `<button class="btnGhost" type="button" data-module-action="record-edit" data-record-type="${escapeHtml(record.typeKey)}" data-record-id="${escapeHtml(record.id)}">Editar</button>` : `<span class="statusPill statusOk">Enviado</span>`}
+      </div>
+      <div class="recordBody">${escapeHtml(record.monthlySummary || record.diagnosticObservations || record.description || record.sampleDescription || record.projectObjective || 'Registro guardado.')}</div>
+      ${photos.length ? `<div class="recordPhotoMeta">📷 ${escapeHtml(String(photos.length))} foto(s)</div>` : ''}
+    </article>
+  `;
+}
+
+function renderRecordFilters(filters, scope, options = {}) {
+  const { lockType = '' } = options;
+  return `
+    <div class="recordFilters">
+      <label class="field">
+        <span class="fieldLabel">Mes</span>
+        <input class="input" type="month" data-record-filter="${escapeHtml(scope)}" name="month" value="${escapeHtml(filters.month || '')}" />
+      </label>
+      <label class="field">
+        <span class="fieldLabel">Docente</span>
+        <input class="input" type="search" data-record-filter="${escapeHtml(scope)}" name="teacher" value="${escapeHtml(filters.teacher || '')}" placeholder="Nombre o correo" />
+      </label>
+      <label class="field">
+        <span class="fieldLabel">Centro / grupo / proceso</span>
+        <input class="input" type="search" data-record-filter="${escapeHtml(scope)}" name="center" value="${escapeHtml(filters.center || '')}" />
+      </label>
+      ${scope === 'teacherRecords' && !lockType ? `
+      <label class="field">
+        <span class="fieldLabel">Tipo</span>
+        <select class="input" data-record-filter="${escapeHtml(scope)}" name="type">
+          <option value="all"${filters.type === 'all' ? ' selected' : ''}>Todos</option>
+          ${Object.entries(TEACHER_RECORD_TYPES).map(([key, item]) => `<option value="${escapeHtml(key)}"${filters.type === key ? ' selected' : ''}>${escapeHtml(item.label)}</option>`).join('')}
+        </select>
+      </label>` : ''}
+      <label class="field">
+        <span class="fieldLabel">Area artistica</span>
+        <select class="input" data-record-filter="${escapeHtml(scope)}" name="areaId">
+          <option value="all"${filters.areaId === 'all' ? ' selected' : ''}>Todas</option>
+          ${renderAreaOptions({ includeAll: false, selected: filters.areaId || 'all' })}
+        </select>
+      </label>
+    </div>
+  `;
+}
+
+function renderTeacherRecordsModule(typeLock = '') {
+  const activeType = MODULE_STATE.teacherRecords.activeType;
+  const config = getRecordConfig(activeType);
+  const draft = getRecordDraft(activeType);
+  const filters = MODULE_STATE.teacherRecords.filters;
+  const visible = getAllTeacherRecords()
+    .filter((record) => record.typeKey !== 'informesMensuales')
+    .filter((record) => !typeLock || record.typeKey === typeLock)
+    .filter((record) => recordMatchesFilters(record, filters));
+
+  return `
+    <div class="workspaceGrid">
+      <section class="moduleSurface">
+        <div class="moduleSurfaceHead">
+          <div>
+            <h4 class="moduleTitle">${escapeHtml(typeLock ? config.plural : 'Registros docentes')}</h4>
+            <p class="moduleIntro">${escapeHtml(typeLock ? getRecordModuleIntro(typeLock) : 'Diagnosticos, proyectos y muestras de proceso guardados en Firebase.')}</p>
+          </div>
+          <span class="statusPill statusInfo">${escapeHtml(String(visible.length))} registro(s)</span>
+        </div>
+        ${typeLock ? '' : `<div class="segmentedRow" role="tablist" aria-label="Tipo de registro">
+          ${['diagnosticos', 'proyectos', 'muestrasProceso'].map((key) => `<button class="segmentBtn${activeType === key ? ' is-active' : ''}" type="button" data-module-action="record-type" data-record-type="${escapeHtml(key)}">${escapeHtml(TEACHER_RECORD_TYPES[key].label)}</button>`).join('')}
+        </div>`}
+        ${isAdminUser() ? renderRecordFilters(filters, 'teacherRecords', { lockType: typeLock }) : ''}
+        <div class="recordList">
+          ${visible.length ? visible.map((record) => renderRecordCard(record, { canEdit: record.teacherId === CURRENT_USER?.uid || isAdminUser() })).join('') : renderEmptyState('Sin registros', 'Cuando diligencies un registro aparecera aqui.')}
+        </div>
+      </section>
+
+      <section class="moduleSurface moduleSurfaceForm">
+        <div class="moduleSurfaceHead">
+          <div>
+            <h4 class="moduleTitle">${draft.id ? `Editar ${config.label.toLowerCase()}` : `Nuevo ${config.label.toLowerCase()}`}</h4>
+            <p class="moduleIntro">Completa la informacion principal y adjunta evidencias si aplica.</p>
+          </div>
+          ${draft.id ? '<button class="btnGhost" type="button" data-module-action="record-new">Nuevo</button>' : ''}
+        </div>
+        <form id="teacher-record-form" class="formGrid">
+          <input type="hidden" name="recordId" value="${escapeHtml(draft.id)}" />
+          <input type="hidden" name="typeKey" value="${escapeHtml(activeType)}" />
+          ${config.fields.map((field) => renderRecordField(field, draft)).join('')}
+          ${renderRecordPhotoInput(draft)}
+          <div class="formActions fieldSpan2">
+            <button class="btnPrimary" type="submit">${draft.id ? 'Guardar registro' : 'Guardar registro'}</button>
+          </div>
+        </form>
+      </section>
+    </div>
+  `;
+}
+
+function getRecordModuleIntro(typeKey) {
+  if (typeKey === 'diagnosticos') return 'Se realiza al iniciar con un grupo nuevo o un proceso nuevo.';
+  if (typeKey === 'proyectos') return 'Registro semestral del proyecto pedagogico del grupo o proceso.';
+  if (typeKey === 'muestrasProceso') return 'Resultado del proyecto con evidencia fotografica y videos.';
+  return 'Registro docente guardado en Firebase.';
+}
+
+function renderSingleRecordModule(typeKey) {
+  MODULE_STATE.teacherRecords.activeType = typeKey;
+  return renderTeacherRecordsModule(typeKey);
+}
+
+function renderRecordPhotoInput(draft) {
+  const config = getRecordConfig(draft.typeKey);
+  const photos = Array.isArray(draft.photos) ? draft.photos : [];
+  const acceptsVideo = String(config.evidenceAccept || '').includes('video');
+  return `
+    <label class="field fieldSpan2">
+      <span class="fieldLabel">${escapeHtml(config.evidenceLabel || 'Evidencias/fotos opcionales')}${config.evidenceRequired ? ' *' : ''}</span>
+      <input class="input" name="photos" type="file" accept="${escapeHtml(config.evidenceAccept || 'image/*')}" multiple />
+      <small class="fieldHint">${escapeHtml(config.evidenceHint || `Puedes cargar hasta ${RECORD_PHOTO_LIMIT} imagenes. Maximo ${Math.floor(RECORD_PHOTO_MAX_BYTES / 1024 / 1024)}MB por imagen.`)}</small>
+    </label>
+    ${photos.length ? `
+    <div class="field fieldSpan2">
+      <span class="fieldLabel">Evidencias registradas</span>
+      <div class="formPhotoGrid">
+        ${photos.map((photo, index) => `<a class="formPhotoLink" href="${escapeHtml(photo.url || '')}" target="_blank" rel="noreferrer">${acceptsVideo && String(photo.type || '').startsWith('video/') ? `<video src="${escapeHtml(photo.url || '')}" muted playsinline preload="metadata"></video>` : `<img src="${escapeHtml(photo.url || '')}" alt="Evidencia ${escapeHtml(String(index + 1))}" loading="lazy" />`}</a>`).join('')}
+      </div>
+    </div>` : ''}
+  `;
+}
+
+function findMonthlyReportForDraft(draft) {
+  return (DATA_STATE.teacherRecords.informesMensuales || []).find((item) =>
+    item.id !== draft.id
+    && item.teacherId === CURRENT_USER?.uid
+    && item.month === draft.month
+    && String(item.centerGroupProcess || '').trim().toLowerCase() === String(draft.centerGroupProcess || '').trim().toLowerCase()
+    && item.areaId === draft.areaId
+  );
+}
+
+function renderMonthlyReportsModule() {
+  const typeKey = 'informesMensuales';
+  const draft = getRecordDraft(typeKey, MODULE_STATE.monthlyReports.editingId);
+  const filters = MODULE_STATE.monthlyReports.filters;
+  const currentMonth = getCurrentMonthKey();
+  const sentCurrentMonth = (DATA_STATE.teacherRecords.informesMensuales || []).some((item) => item.teacherId === CURRENT_USER?.uid && item.month === currentMonth);
+  const visible = (DATA_STATE.teacherRecords.informesMensuales || []).filter((record) => recordMatchesFilters(record, filters));
+
+  return `
+    <div class="workspaceGrid">
+      <section class="moduleSurface">
+        <div class="moduleSurfaceHead">
+          <div>
+            <h4 class="moduleTitle">Informes mensuales</h4>
+            <p class="moduleIntro">Diligencia y consulta el informe del mes por centro, grupo o proceso.</p>
+          </div>
+          <span class="statusPill ${sentCurrentMonth ? 'statusOk' : 'statusWarn'}">${sentCurrentMonth ? 'Mes enviado' : 'Pendiente del mes'}</span>
+        </div>
+        ${renderRecordFilters(filters, 'monthlyReports')}
+        <div class="recordList">
+          ${visible.length ? visible.map((record) => renderRecordCard(record, { canEdit: record.teacherId === CURRENT_USER?.uid || isAdminUser() })).join('') : renderEmptyState('Sin informes', 'Aun no hay informes para estos filtros.')}
+        </div>
+      </section>
+
+      <section class="moduleSurface moduleSurfaceForm">
+        <div class="moduleSurfaceHead">
+          <div>
+            <h4 class="moduleTitle">${draft.id ? 'Editar informe mensual' : 'Nuevo informe mensual'}</h4>
+            <p class="moduleIntro">Si ya existe un informe para el mismo mes, centro/proceso y area, se evita duplicarlo.</p>
+          </div>
+          ${draft.id ? '<button class="btnGhost" type="button" data-module-action="monthly-new">Nuevo</button>' : ''}
+        </div>
+        <form id="monthly-report-form" class="formGrid">
+          <input type="hidden" name="recordId" value="${escapeHtml(draft.id)}" />
+          <input type="hidden" name="typeKey" value="informesMensuales" />
+          ${TEACHER_RECORD_TYPES.informesMensuales.fields.map((field) => renderRecordField(field, draft)).join('')}
+          ${renderRecordPhotoInput(draft)}
+          <div class="formActions fieldSpan2">
+            <button class="btnPrimary" type="submit">${draft.id ? 'Guardar informe' : 'Enviar informe mensual'}</button>
           </div>
         </form>
       </section>
@@ -3549,6 +4173,24 @@ const MODULE_CONFIG = {
     subtitle: 'Consulta, agrega o edita bitacoras guardadas en Firebase.',
     render: renderLogsModule
   },
+  diagnosticos: {
+    eyebrow: 'Diagnosticos',
+    title: 'Diagnosticos',
+    subtitle: 'Registro al iniciar con un grupo nuevo o un proceso nuevo.',
+    render: () => renderSingleRecordModule('diagnosticos')
+  },
+  proyectos: {
+    eyebrow: 'Proyectos',
+    title: 'Proyectos semestrales',
+    subtitle: 'Planeacion y seguimiento de proyectos por semestre.',
+    render: () => renderSingleRecordModule('proyectos')
+  },
+  muestrasProceso: {
+    eyebrow: 'Muestras',
+    title: 'Muestras de proceso',
+    subtitle: 'Resultado del proyecto con evidencia fotografica y videos.',
+    render: () => renderSingleRecordModule('muestrasProceso')
+  },
   calendar: {
     eyebrow: 'Institucional',
     title: 'Calendario academico',
@@ -3572,6 +4214,18 @@ const MODULE_CONFIG = {
     title: 'Galeria de evidencias',
     subtitle: 'Consulta visual compartida.',
     render: renderSharedGalleryModule
+  },
+  teacherRecords: {
+    eyebrow: 'Gestion docente',
+    title: 'Registros docentes',
+    subtitle: 'Diagnosticos, proyectos y muestras de proceso.',
+    render: renderTeacherRecordsModule
+  },
+  monthlyReports: {
+    eyebrow: 'Cierre mensual',
+    title: 'Informes mensuales',
+    subtitle: 'Entrega mensual por centro, grupo o proceso.',
+    render: renderMonthlyReportsModule
   }
 };
 
@@ -3619,6 +4273,24 @@ async function openWorkspaceModule(moduleId) {
     MODULE_STATE.logs.areaId = userCanAccessArea(MODULE_STATE.logs.areaId) ? MODULE_STATE.logs.areaId : getPrimaryAreaId();
   }
 
+  if (['diagnosticos', 'proyectos', 'muestrasProceso'].includes(moduleId)) {
+    MODULE_STATE.teacherRecords.activeType = moduleId;
+    MODULE_STATE.teacherRecords.editingId = '';
+    await loadTeacherRecordType(moduleId);
+  }
+
+  if (moduleId === 'teacherRecords') {
+    await loadTeacherRecords(['diagnosticos', 'proyectos', 'muestrasProceso']);
+    MODULE_STATE.teacherRecords.activeType = TEACHER_RECORD_TYPES[MODULE_STATE.teacherRecords.activeType]?.module === 'teacherRecords'
+      ? MODULE_STATE.teacherRecords.activeType
+      : 'diagnosticos';
+  }
+
+  if (moduleId === 'monthlyReports') {
+    await loadTeacherRecordType('informesMensuales');
+    MODULE_STATE.monthlyReports.areaId = userCanAccessArea(MODULE_STATE.monthlyReports.areaId) ? MODULE_STATE.monthlyReports.areaId : getPrimaryAreaId();
+  }
+
   if (moduleId === 'calendar') {
     await loadCalendar();
   }
@@ -3656,6 +4328,18 @@ async function refreshActiveModule() {
 
   if (MODULE_STATE.current === 'logs') {
     await loadLogs(true);
+  }
+
+  if (['diagnosticos', 'proyectos', 'muestrasProceso'].includes(MODULE_STATE.current)) {
+    await loadTeacherRecordType(MODULE_STATE.current, true);
+  }
+
+  if (MODULE_STATE.current === 'teacherRecords') {
+    await loadTeacherRecords(['diagnosticos', 'proyectos', 'muestrasProceso'], true);
+  }
+
+  if (MODULE_STATE.current === 'monthlyReports') {
+    await loadTeacherRecordType('informesMensuales', true);
   }
 
   if (MODULE_STATE.current === 'calendar') {
@@ -3828,6 +4512,10 @@ async function saveLog(formData) {
     ? (DATA_STATE.logs.find((item) => item.id === logId)?.photos || [])
     : [];
   let nextPhotoList = Array.isArray(currentPhotoList) ? [...currentPhotoList] : [];
+  if (!nextPhotoList.length && !files.length) {
+    toast('Debes subir al menos una foto de evidencia para guardar la bitacora.');
+    return;
+  }
   const targetLogId = logId || doc(collection(DB, COLLECTIONS.classLogs)).id;
 
   const payload = {
@@ -3894,6 +4582,131 @@ async function saveLog(formData) {
   syncShellUi();
 }
 
+async function uploadRecordPhotos({ files, folder, recordId, currentPhotos = [] }) {
+  if (!files.length) return Array.isArray(currentPhotos) ? [...currentPhotos] : [];
+  if (!STORAGE) throw new Error('storage-not-ready');
+
+  const photos = Array.isArray(currentPhotos) ? [...currentPhotos] : [];
+  for (const file of files) {
+    const cleanName = (file.name || 'foto.jpg').replace(/[^a-zA-Z0-9.\-_]/g, '_');
+    const path = `${folder}/${recordId}/${Date.now()}_${Math.random().toString(36).slice(2, 8)}_${cleanName}`;
+    const fileRef = storageRef(STORAGE, path);
+    await uploadBytes(fileRef, file);
+    const url = await getDownloadURL(fileRef);
+    photos.push({
+      name: file.name || 'foto',
+      type: file.type || 'image/*',
+      size: file.size || 0,
+      path,
+      url,
+      uploadedAtClient: Date.now()
+    });
+  }
+  return photos;
+}
+
+async function saveTeacherRecord(formData, forcedTypeKey = '') {
+  const typeKey = forcedTypeKey || readFormValue(formData, 'typeKey') || MODULE_STATE.teacherRecords.activeType;
+  const config = getRecordConfig(typeKey);
+  const recordId = readFormValue(formData, 'recordId');
+  const areaId = readFormValue(formData, 'areaId');
+
+  if (!userCanAccessArea(areaId)) {
+    toast('No puedes guardar registros fuera de tus areas autorizadas.');
+    return;
+  }
+
+  const payload = {
+    areaId,
+    areaName: getAreaLabel(areaId),
+    type: config.type,
+    tipoRegistro: config.type,
+    teacherId: CURRENT_USER.uid,
+    uid: CURRENT_USER.uid,
+    teacherEmail: emailKey(CURRENT_USER),
+    email: emailKey(CURRENT_USER),
+    teacherName: getTeacherDisplayName(),
+    docenteNombre: getTeacherDisplayName(),
+    updatedAt: serverTimestamp(),
+    updatedAtClient: Date.now(),
+    source: 'docentes-fsa-hub'
+  };
+
+  for (const field of config.fields) {
+    payload[field.name] = readFormValue(formData, field.name);
+    if (field.required && !payload[field.name]) {
+      toast(`Completa el campo: ${field.label}.`);
+      return;
+    }
+  }
+
+  if (typeKey === 'informesMensuales') {
+    const duplicate = findMonthlyReportForDraft({ id: recordId, ...payload });
+    if (duplicate) {
+      MODULE_STATE.monthlyReports.editingId = duplicate.id;
+      toast('Ya existe un informe para ese mes, centro/proceso y area. Lo abrimos para editar.');
+      renderWorkspaceModule();
+      return;
+    }
+  }
+
+  const files = formData.getAll('photos').filter((item) => item instanceof File && item.size > 0);
+  if (files.length > RECORD_PHOTO_LIMIT) {
+    toast(`Solo puedes subir hasta ${RECORD_PHOTO_LIMIT} evidencias por registro.`);
+    return;
+  }
+  const maxBytes = config.evidenceAccept?.includes('video') ? RECORD_MEDIA_MAX_BYTES : RECORD_PHOTO_MAX_BYTES;
+  if (files.some((file) => file.size > maxBytes)) {
+    toast(`Cada evidencia debe pesar maximo ${Math.floor(maxBytes / 1024 / 1024)}MB.`);
+    return;
+  }
+  const currentRecord = recordId ? (DATA_STATE.teacherRecords[typeKey] || []).find((item) => item.id === recordId) : null;
+  const currentPhotos = Array.isArray(currentRecord?.photos) ? currentRecord.photos : [];
+  if (config.evidenceRequired && !currentPhotos.length && !files.length) {
+    toast('Debes subir al menos una evidencia fotografica o video para guardar la muestra de proceso.');
+    return;
+  }
+  if (files.length && !STORAGE) {
+    toast('Firebase Storage no esta listo. Configuralo e intenta de nuevo.');
+    return;
+  }
+
+  const targetId = recordId || doc(collection(DB, config.collection)).id;
+  payload.photos = currentPhotos;
+
+  if (recordId) {
+    await updateDoc(doc(DB, config.collection, recordId), payload);
+  } else {
+    await setDoc(doc(DB, config.collection, targetId), {
+      ...payload,
+      createdAt: serverTimestamp(),
+      createdAtClient: Date.now()
+    });
+  }
+
+  if (files.length) {
+    try {
+      const photos = await uploadRecordPhotos({ files, folder: config.collection, recordId: targetId, currentPhotos });
+      await updateDoc(doc(DB, config.collection, targetId), {
+        photos,
+        updatedAt: serverTimestamp(),
+        updatedAtClient: Date.now()
+      });
+    } catch (error) {
+      console.error('No se pudieron subir evidencias:', error);
+      toast('El registro se guardo, pero no pude subir las evidencias.');
+    }
+  }
+
+  if (typeKey === 'informesMensuales') MODULE_STATE.monthlyReports.editingId = '';
+  else MODULE_STATE.teacherRecords.editingId = '';
+  toast(typeKey === 'informesMensuales' ? 'Informe mensual guardado.' : 'Registro docente guardado.');
+  await loadTeacherRecordType(typeKey, true);
+  renderWorkspaceModule();
+  syncShellUi();
+  renderMonthlyReminder();
+}
+
 function bindWorkspaceModal() {
   if (workspaceBound) return;
   workspaceBound = true;
@@ -3956,6 +4769,39 @@ function bindWorkspaceModal() {
       return;
     }
 
+    if (action === 'record-type') {
+      MODULE_STATE.teacherRecords.activeType = actionEl.getAttribute('data-record-type') || 'diagnosticos';
+      MODULE_STATE.teacherRecords.editingId = '';
+      renderWorkspaceModule();
+      return;
+    }
+
+    if (action === 'record-new') {
+      MODULE_STATE.teacherRecords.editingId = '';
+      renderWorkspaceModule();
+      return;
+    }
+
+    if (action === 'monthly-new') {
+      MODULE_STATE.monthlyReports.editingId = '';
+      renderWorkspaceModule();
+      return;
+    }
+
+    if (action === 'record-edit') {
+      const typeKey = actionEl.getAttribute('data-record-type') || '';
+      const recordId = actionEl.getAttribute('data-record-id') || '';
+      if (typeKey === 'informesMensuales') {
+        MODULE_STATE.monthlyReports.editingId = recordId;
+        MODULE_STATE.monthlyReports.areaId = (DATA_STATE.teacherRecords.informesMensuales || []).find((item) => item.id === recordId)?.areaId || MODULE_STATE.monthlyReports.areaId;
+      } else {
+        MODULE_STATE.teacherRecords.activeType = typeKey || MODULE_STATE.teacherRecords.activeType;
+        MODULE_STATE.teacherRecords.editingId = recordId;
+      }
+      renderWorkspaceModule();
+      return;
+    }
+
     if (action === 'shift-refresh') {
       await refreshActiveModule();
       return;
@@ -3996,6 +4842,19 @@ function bindWorkspaceModal() {
       renderWorkspaceModule();
     }
 
+    const filterScope = target.getAttribute('data-record-filter');
+    if (filterScope === 'teacherRecords') {
+      MODULE_STATE.teacherRecords.filters[target.getAttribute('name')] = target.value || '';
+      renderWorkspaceModule();
+      return;
+    }
+
+    if (filterScope === 'monthlyReports') {
+      MODULE_STATE.monthlyReports.filters[target.getAttribute('name')] = target.value || '';
+      renderWorkspaceModule();
+      return;
+    }
+
     if (target.id === 'calendar-year') {
       MODULE_STATE.calendar.year = String(target.value || new Date().getFullYear());
       renderWorkspaceModule();
@@ -4028,6 +4887,16 @@ function bindWorkspaceModal() {
 
       if (form.id === 'log-form') {
         await saveLog(formData);
+        return;
+      }
+
+      if (form.id === 'teacher-record-form') {
+        await saveTeacherRecord(formData);
+        return;
+      }
+
+      if (form.id === 'monthly-report-form') {
+        await saveTeacherRecord(formData, 'informesMensuales');
         return;
       }
 
@@ -4070,6 +4939,21 @@ async function triggerAccess(id) {
 
   if (accessId === 'bitacoraClases') {
     await openWorkspaceModule('logs');
+    return;
+  }
+
+  if (['diagnosticos', 'proyectos', 'muestrasProceso'].includes(accessId)) {
+    await openWorkspaceModule(accessId);
+    return;
+  }
+
+  if (accessId === 'registrosDocentes') {
+    await openWorkspaceModule('teacherRecords');
+    return;
+  }
+
+  if (accessId === 'informesMensuales') {
+    await openWorkspaceModule('monthlyReports');
     return;
   }
 
@@ -4143,6 +5027,64 @@ function wireBottomDock() {
       }
     });
   });
+}
+
+function shouldShowMonthlyReminder() {
+  const day = getCurrentBogotaDayNumber();
+  if (day < 22 || day > 25) return false;
+  const monthKey = getCurrentMonthKey();
+  const sent = (DATA_STATE.teacherRecords.informesMensuales || []).some((item) =>
+    item.teacherId === CURRENT_USER?.uid && item.month === monthKey
+  );
+  if (sent) return false;
+
+  const dismissKey = `${MONTHLY_REMINDER_DISMISS_PREFIX}${emailKey(CURRENT_USER)}_${getBogotaDateParts().date}`;
+  try {
+    return sessionStorage.getItem(dismissKey) !== '1';
+  } catch (_) {
+    return true;
+  }
+}
+
+function renderMonthlyReminder() {
+  const hero = document.querySelector('.workspaceHero');
+  if (!hero || !CURRENT_USER) return;
+
+  let banner = document.getElementById('monthly-report-reminder');
+  if (!banner) {
+    banner = document.createElement('div');
+    banner.id = 'monthly-report-reminder';
+    banner.className = 'moduleAlert monthlyReminder';
+    banner.innerHTML = `
+      <div>
+        <div class="moduleAlertTitle">Informe mensual</div>
+        <p class="moduleAlertText">Recuerda diligenciar tu informe mensual. Tienes plazo maximo hasta el 25 de este mes.</p>
+      </div>
+      <div class="monthlyReminderActions">
+        <button class="btnPrimary" type="button" data-monthly-action="open">Diligenciar</button>
+        <button class="btnGhost" type="button" data-monthly-action="close">Cerrar</button>
+      </div>
+    `;
+    hero.appendChild(banner);
+    banner.addEventListener('click', async (event) => {
+      const btn = event.target.closest('[data-monthly-action]');
+      if (!btn) return;
+      const action = btn.getAttribute('data-monthly-action');
+      if (action === 'open') {
+        await openWorkspaceModule('monthlyReports');
+        return;
+      }
+      if (action === 'close') {
+        const dismissKey = `${MONTHLY_REMINDER_DISMISS_PREFIX}${emailKey(CURRENT_USER)}_${getBogotaDateParts().date}`;
+        try {
+          sessionStorage.setItem(dismissKey, '1');
+        } catch (_) {}
+        renderMonthlyReminder();
+      }
+    });
+  }
+
+  banner.hidden = !shouldShowMonthlyReminder();
 }
 
 async function mount() {
@@ -4223,6 +5165,7 @@ async function mount() {
     MODULE_STATE.students.filterArea = getAllowedAreaIds(ACTIVE_PROFILE).length > 1 ? 'all' : getPrimaryAreaId();
     MODULE_STATE.attendance.areaId = getPrimaryAreaId();
     MODULE_STATE.logs.areaId = getPrimaryAreaId();
+    MODULE_STATE.monthlyReports.areaId = getPrimaryAreaId();
 
     show('app');
     setBottomNavActive('home');
@@ -4245,9 +5188,11 @@ async function mount() {
       loadCalendar(true),
       loadSchedules(true),
       loadPunctuality(true),
-      loadGallery(true)
+      loadGallery(true),
+      loadTeacherRecordType('informesMensuales', true)
     ]);
     syncShellUi();
+    renderMonthlyReminder();
     renderFavoritesList();
   });
 }

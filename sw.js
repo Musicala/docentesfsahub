@@ -8,19 +8,18 @@
    - Limpieza suave de cachés viejos + mensajería a la UI
 */
 
-const BUILD = "2026-05-19.1";
-const VERSION = `v7-${BUILD}`;
+const BUILD = "2026-05-25.1";
+const VERSION = `v8-${BUILD}`;
 
 // Nombres sin versión (para no acumular basura)
-const CACHE_STATIC  = "musicala-static";
-const CACHE_RUNTIME = "musicala-runtime";
+const CACHE_STATIC  = `musicala-static-${VERSION}`;
+const CACHE_RUNTIME = `musicala-runtime-${VERSION}`;
 
 // Por si antes usaste otros nombres:
 const OLD_CACHES_PREFIXES = ["musicala-", "fm-", "ferma-", "hub-"];
 
 // Core assets: mínimo estable (NO app.js / styles.css)
 const CORE_ASSETS = [
-  "./",
   "./index.html",
   "./manifest.webmanifest",
   "./logo.png",
