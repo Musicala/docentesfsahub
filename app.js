@@ -163,6 +163,7 @@ import {
   setDoc,
   addDoc,
   updateDoc,
+  deleteDoc,
   query,
   where,
   serverTimestamp
@@ -4551,20 +4552,33 @@ async function saveLog(formData) {
   }
 
   if (files.length) {
-    for (const file of files) {
-      const cleanName = (file.name || 'foto.jpg').replace(/[^a-zA-Z0-9.\-_]/g, '_');
-      const path = `classLogs/${targetLogId}/${Date.now()}_${Math.random().toString(36).slice(2, 8)}_${cleanName}`;
-      const fileRef = storageRef(STORAGE, path);
-      await uploadBytes(fileRef, file);
-      const url = await getDownloadURL(fileRef);
-      nextPhotoList.push({
-        name: file.name || 'foto',
-        type: file.type || 'image/*',
-        size: file.size || 0,
-        path,
-        url,
-        uploadedAtClient: Date.now()
-      });
+    try {
+      for (const file of files) {
+        const cleanName = (file.name || 'foto.jpg').replace(/[^a-zA-Z0-9.\-_]/g, '_');
+        const path = `classLogs/${targetLogId}/${Date.now()}_${Math.random().toString(36).slice(2, 8)}_${cleanName}`;
+        const fileRef = storageRef(STORAGE, path);
+        await uploadBytes(fileRef, file);
+        const url = await getDownloadURL(fileRef);
+        nextPhotoList.push({
+          name: file.name || 'foto',
+          type: file.type || 'image/*',
+          size: file.size || 0,
+          path,
+          url,
+          uploadedAtClient: Date.now()
+        });
+      }
+    } catch (error) {
+      console.error('No se pudieron subir las fotos de la bitacora:', error);
+      if (!logId && !currentPhotoList.length) {
+        try {
+          await deleteDoc(doc(DB, COLLECTIONS.classLogs, targetLogId));
+        } catch (cleanupError) {
+          console.error('No se pudo revertir la bitacora sin fotos:', cleanupError);
+        }
+      }
+      toast('No se pudieron subir las fotos, la bitacora NO quedo guardada. Revisa tu conexion e intenta de nuevo.');
+      return;
     }
 
     await updateDoc(doc(DB, COLLECTIONS.classLogs, targetLogId), {
@@ -4694,6 +4708,15 @@ async function saveTeacherRecord(formData, forcedTypeKey = '') {
       });
     } catch (error) {
       console.error('No se pudieron subir evidencias:', error);
+      if (config.evidenceRequired && !recordId && !currentPhotos.length) {
+        try {
+          await deleteDoc(doc(DB, config.collection, targetId));
+        } catch (cleanupError) {
+          console.error('No se pudo revertir el registro sin evidencias:', cleanupError);
+        }
+        toast('No se pudieron subir las evidencias, el registro NO quedo guardado. Intenta de nuevo.');
+        return;
+      }
       toast('El registro se guardo, pero no pude subir las evidencias.');
     }
   }

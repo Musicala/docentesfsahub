@@ -15,14 +15,64 @@ service firebase.storage {
         && request.resource.size < 8 * 1024 * 1024;
     }
 
+    function isMediaFile() {
+      return request.resource != null
+        && (
+          request.resource.contentType.matches('image/.*') ||
+          request.resource.contentType.matches('video/.*')
+        );
+    }
+
+    function underMediaMaxSize() {
+      return request.resource != null
+        && request.resource.size < 50 * 1024 * 1024;
+    }
+
     match /classLogs/{logId}/{fileName} {
       allow read: if signedIn()
-        && exists(/databases/(default)/documents/classLogs/$(logId));
+        && firestore.exists(/databases/(default)/documents/classLogs/$(logId));
 
       allow write: if signedIn()
         && isImageFile()
         && underMaxSize()
-        && exists(/databases/(default)/documents/classLogs/$(logId));
+        && firestore.exists(/databases/(default)/documents/classLogs/$(logId));
+    }
+
+    match /diagnosticos/{recordId}/{fileName} {
+      allow read: if signedIn()
+        && firestore.exists(/databases/(default)/documents/diagnosticos/$(recordId));
+      allow write: if signedIn()
+        && isImageFile()
+        && underMaxSize()
+        && firestore.exists(/databases/(default)/documents/diagnosticos/$(recordId));
+    }
+
+    match /proyectos/{recordId}/{fileName} {
+      allow read: if signedIn()
+        && firestore.exists(/databases/(default)/documents/proyectos/$(recordId));
+      allow write: if signedIn()
+        && isImageFile()
+        && underMaxSize()
+        && firestore.exists(/databases/(default)/documents/proyectos/$(recordId));
+    }
+
+    match /muestrasProceso/{recordId}/{fileName} {
+      allow read: if signedIn()
+        && firestore.exists(/databases/(default)/documents/muestrasProceso/$(recordId));
+      allow write: if signedIn()
+        && isMediaFile()
+        && underMediaMaxSize()
+        && firestore.exists(/databases/(default)/documents/muestrasProceso/$(recordId));
+    }
+
+    match /informesMensuales/{recordId}/{fileName} {
+      allow read: if signedIn()
+        && firestore.exists(/databases/(default)/documents/informesMensuales/$(recordId));
+      allow write: if signedIn()
+        && isImageFile()
+        && underMaxSize()
+        && firestore.exists(/databases/(default)/documents/informesMensuales/$(recordId));
     }
   }
 }
+
