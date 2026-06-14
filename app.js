@@ -1,6 +1,6 @@
 ﻿'use strict';
 
-const BUILD = '2026-05-25.1';
+const BUILD = '2026-06-14.1';
 const SW_RELOAD_KEY = `docentes_fsa_sw_reloaded_${BUILD}`;
 
 const firebaseConfig = {
@@ -2505,18 +2505,49 @@ async function loadPunctuality(force = false) {
 async function loadGallery(force = false) {
   if (!DB || !CURRENT_USER) return [];
   if (DATA_STATE.galleryLoaded && !force) return DATA_STATE.gallery;
+
+  const galleryFromLogs = await loadLogs(force);
+  const logPhotos = galleryFromLogs.flatMap((record) => {
+    const photos = Array.isArray(record.photos) ? record.photos : [];
+    return photos
+      .filter((photo) => photo?.url || photo?.imageUrl || photo?.photoUrl)
+      .map((photo, index) => ({
+        id: `${record.id || 'log'}-${photo.path || photo.url || index}`,
+        source: 'classLogs',
+        logId: record.id || '',
+        url: photo.url || photo.imageUrl || photo.photoUrl || '',
+        imageUrl: photo.imageUrl || photo.url || '',
+        photoUrl: photo.photoUrl || photo.url || '',
+        title: record.sessionName || 'Bitacora de clase',
+        caption: record.sessionName || '',
+        areaId: record.areaId || '',
+        areaName: record.areaName || getAreaLabel(record.areaId),
+        date: record.date || '',
+        teacherName: record.teacherName || '',
+        teacherEmail: record.teacherEmail || '',
+        updatedAtClient: Number(photo.uploadedAtClient || record.updatedAtClient || record.createdAtClient || 0) || 0,
+        createdAtClient: Number(record.createdAtClient || 0) || 0
+      }));
+  });
+
   try {
     const snap = await getDocs(collection(DB, COLLECTIONS.galleryImages));
-    DATA_STATE.gallery = snap.docs
+    const sharedImages = snap.docs
       .map((docSnap) => ({ id: docSnap.id, ...(docSnap.data() || {}) }))
+      .filter((item) => !item.areaId || userCanAccessArea(item.areaId));
+    DATA_STATE.gallery = [...logPhotos, ...sharedImages]
       .sort((a, b) => Number(b.updatedAtClient || b.createdAtClient || 0) - Number(a.updatedAtClient || a.createdAtClient || 0));
     DATA_STATE.galleryLoaded = true;
     syncShellUi();
     return DATA_STATE.gallery;
   } catch (error) {
     console.error('No se pudo cargar galeria:', error);
-    toast('No pude cargar la galeria de evidencias.');
-    return [];
+    DATA_STATE.gallery = logPhotos
+      .sort((a, b) => Number(b.updatedAtClient || b.createdAtClient || 0) - Number(a.updatedAtClient || a.createdAtClient || 0));
+    DATA_STATE.galleryLoaded = true;
+    syncShellUi();
+    if (!DATA_STATE.gallery.length) toast('No pude cargar la galeria de evidencias.');
+    return DATA_STATE.gallery;
   }
 }
 
@@ -2575,6 +2606,7 @@ function getLogDraft() {
       id: editing.id,
       areaId: editing.areaId || getPrimaryAreaId(),
       date: editing.date || getBogotaDateParts().date,
+      sessionTime: editing.sessionTime || editing.time || '',
       sessionName: editing.sessionName || '',
       siteName: editing.siteName || '',
       studentGroup: editing.studentGroup || '',
@@ -2594,6 +2626,7 @@ function getLogDraft() {
     id: '',
     areaId,
     date: getBogotaDateParts().date,
+    sessionTime: '',
     sessionName: '',
     siteName: '',
     studentGroup: '',
@@ -2605,6 +2638,18 @@ function getLogDraft() {
     notes: '',
     photos: []
   };
+}
+
+function findLogDateDuplicates({ logId = '', areaId = '', date = '', sessionTime = '' } = {}) {
+  return DATA_STATE.logs.filter((item) => {
+    if (!item || item.id === logId) return false;
+    if (areaId && item.areaId !== areaId) return false;
+    if (item.date !== date) return false;
+    return true;
+  }).map((item) => ({
+    ...item,
+    hasSameTime: !!sessionTime && (item.sessionTime || item.time || '') === sessionTime
+  }));
 }
 
 function getButtonMeta(button, links) {
@@ -3155,12 +3200,13 @@ function renderLogCard(record) {
   const excerpt = record.activities || record.achievements || record.notes || 'Sin resumen corto.';
   const photos = Array.isArray(record.photos) ? record.photos : [];
   const firstPhoto = photos[0]?.url || '';
+  const dateTime = [formatDateLabel(record.date), record.sessionTime || record.time || ''].filter(Boolean).join(' · ');
   return `
     <button class="recordCard" type="button" data-module-action="log-edit" data-log-id="${escapeHtml(record.id)}">
       <div class="recordCardTop">
         <div>
           <div class="recordTitle">${escapeHtml(record.sessionName || 'Bitacora sin titulo')}</div>
-          <div class="recordMeta">${escapeHtml(formatDateLabel(record.date))} · ${escapeHtml(getAreaLabel(record.areaId))}</div>
+          <div class="recordMeta">${escapeHtml(dateTime)} · ${escapeHtml(getAreaLabel(record.areaId))}</div>
         </div>
         <span class="statusPill statusInfo">${escapeHtml(record.siteName || 'Sin sede')}</span>
       </div>
@@ -3187,7 +3233,7 @@ function renderLogGallery(areaId) {
     return photos.map((photo, index) => `
       <button class="galleryCard" type="button" data-module-action="log-edit" data-log-id="${escapeHtml(record.id)}">
         <img src="${escapeHtml(photo.url || '')}" alt="Foto ${escapeHtml(String(index + 1))} de ${escapeHtml(record.sessionName || 'bitacora')}" loading="lazy" />
-        <span class="galleryMeta">${escapeHtml(record.sessionName || 'Bitacora')} · ${escapeHtml(formatDateLabel(record.date))}</span>
+        <span class="galleryMeta">${escapeHtml(record.sessionName || 'Bitacora')} · ${escapeHtml([formatDateLabel(record.date), record.sessionTime || record.time || ''].filter(Boolean).join(' · '))}</span>
       </button>
     `);
   }).join('');
@@ -3547,6 +3593,11 @@ function renderLogsModule() {
           <label class="field">
             <span class="fieldLabel">Fecha</span>
             <input class="input" name="date" type="date" required value="${escapeHtml(draft.date)}" />
+          </label>
+
+          <label class="field">
+            <span class="fieldLabel">Hora de la sesion</span>
+            <input class="input" name="sessionTime" type="time" required value="${escapeHtml(draft.sessionTime)}" />
           </label>
 
           <label class="field fieldSpan2">
@@ -4483,6 +4534,7 @@ async function saveLog(formData) {
   const logId = readFormValue(formData, 'logId');
   const areaId = readFormValue(formData, 'areaId');
   const date = readFormValue(formData, 'date');
+  const sessionTime = readFormValue(formData, 'sessionTime');
   const sessionName = readFormValue(formData, 'sessionName');
 
   if (!userCanAccessArea(areaId)) {
@@ -4490,9 +4542,23 @@ async function saveLog(formData) {
     return;
   }
 
-  if (!date || !sessionName) {
-    toast('Completa la fecha y el nombre de la sesion.');
+  if (!date || !sessionTime || !sessionName) {
+    toast('Completa la fecha, la hora y el nombre de la sesion.');
     return;
+  }
+
+  const duplicateLogs = findLogDateDuplicates({ logId, areaId, date, sessionTime });
+  if (duplicateLogs.some((item) => item.hasSameTime)) {
+    toast('Ya existe una bitacora para esa fecha y esa misma hora. Cambia la hora o edita la bitacora existente.');
+    return;
+  }
+  if (duplicateLogs.length) {
+    const duplicateSummary = duplicateLogs
+      .slice(0, 3)
+      .map((item) => `${item.sessionTime || item.time || 'sin hora'} - ${item.sessionName || 'Bitacora sin titulo'}`)
+      .join('\n');
+    const ok = window.confirm(`Ya existe una bitacora para ${formatDateLabel(date)} en ${getAreaLabel(areaId)}:\n\n${duplicateSummary}\n\n¿Quieres agregar otra bitacora para ese mismo dia con una hora diferente?`);
+    if (!ok) return;
   }
 
   const files = formData.getAll('photos').filter((item) => item instanceof File && item.size > 0);
@@ -4523,6 +4589,7 @@ async function saveLog(formData) {
     areaId,
     areaName: getAreaLabel(areaId),
     date,
+    sessionTime,
     sessionName,
     siteName: readFormValue(formData, 'siteName'),
     studentGroup: readFormValue(formData, 'studentGroup'),
