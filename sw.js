@@ -8,8 +8,8 @@
    - Limpieza suave de cachés viejos + mensajería a la UI
 */
 
-const BUILD = "2026-06-22.1";
-const VERSION = `v8-${BUILD}`;
+const BUILD = "2026-06-24.1";
+const VERSION = `v9-${BUILD}`;
 
 // Nombres sin versión (para no acumular basura)
 const CACHE_STATIC  = `musicala-static-${VERSION}`;

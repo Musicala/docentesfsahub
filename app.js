@@ -1612,6 +1612,22 @@ function isNotFoundError(error) {
   return code.includes('not-found') || message.includes('no document to update') || message.includes('not found');
 }
 
+function isPermissionError(error) {
+  const code = String(error?.code || '').toLowerCase();
+  const message = String(error?.message || '').toLowerCase();
+  return code.includes('permission-denied')
+    || code.includes('unauthenticated')
+    || message.includes('insufficient permissions')
+    || message.includes('permission');
+}
+
+function describeSaveError(error) {
+  if (isPermissionError(error)) {
+    return 'No quedo guardada: tu cuenta no tiene permiso para guardar aqui. Avisa al administrador.';
+  }
+  return 'No quedo guardada. Revisa tu conexion a internet e intentalo de nuevo.';
+}
+
 async function getShiftDocSnapshot(ref, { preferServer = true } = {}) {
   if (preferServer && navigator.onLine !== false) {
     try {
@@ -4721,14 +4737,22 @@ async function saveLog(formData) {
     source: 'docentes-fsa-hub'
   };
 
-  if (logId) {
-    await updateDoc(doc(DB, COLLECTIONS.classLogs, logId), payload);
-  } else {
-    await setDoc(doc(DB, COLLECTIONS.classLogs, targetLogId), {
-      ...payload,
-      createdAt: serverTimestamp(),
-      createdAtClient: Date.now()
-    });
+  const writeRef = doc(DB, COLLECTIONS.classLogs, logId || targetLogId);
+
+  try {
+    if (logId) {
+      await updateDoc(writeRef, payload);
+    } else {
+      await setDoc(writeRef, {
+        ...payload,
+        createdAt: serverTimestamp(),
+        createdAtClient: Date.now()
+      });
+    }
+  } catch (error) {
+    console.error('No se pudo guardar la bitacora:', error);
+    toast(describeSaveError(error));
+    return;
   }
 
   if (files.length) {
@@ -4752,25 +4776,50 @@ async function saveLog(formData) {
       console.error('No se pudieron subir las fotos de la bitacora:', error);
       if (!logId && !currentPhotoList.length) {
         try {
-          await deleteDoc(doc(DB, COLLECTIONS.classLogs, targetLogId));
+          await deleteDoc(writeRef);
         } catch (cleanupError) {
           console.error('No se pudo revertir la bitacora sin fotos:', cleanupError);
         }
       }
-      toast('No se pudieron subir las fotos, la bitacora NO quedo guardada. Revisa tu conexion e intenta de nuevo.');
+      toast(
+        isPermissionError(error)
+          ? 'No quedo guardada: tu cuenta no tiene permiso para subir las fotos. Avisa al administrador.'
+          : 'No quedo guardada: no se pudieron subir las fotos. Revisa tu conexion e intentalo de nuevo.'
+      );
       return;
     }
 
-    await updateDoc(doc(DB, COLLECTIONS.classLogs, targetLogId), {
-      photos: nextPhotoList,
-      updatedAt: serverTimestamp(),
-      updatedAtClient: Date.now()
-    });
+    try {
+      await updateDoc(writeRef, {
+        photos: nextPhotoList,
+        updatedAt: serverTimestamp(),
+        updatedAtClient: Date.now()
+      });
+    } catch (error) {
+      console.error('No se pudieron registrar las fotos de la bitacora:', error);
+      toast('Las fotos se subieron pero no quedaron registradas. Vuelve a intentarlo.');
+      return;
+    }
+  }
+
+  // Confirmacion real contra el servidor: si la info no llego a la nube, avisamos error.
+  let confirmed = false;
+  try {
+    const check = await getDocFromServer(writeRef);
+    confirmed = check.exists();
+  } catch (error) {
+    console.warn('No se pudo confirmar la bitacora en el servidor:', error);
+    confirmed = false;
+  }
+
+  if (!confirmed) {
+    toast('No pudimos confirmar que se guardo. Revisa tu conexion y verifica antes de cerrar.');
+    return;
   }
 
   MODULE_STATE.logs.editingId = '';
   MODULE_STATE.logs.areaId = areaId;
-  toast(logId ? 'Bitacora actualizada.' : 'Bitacora guardada.');
+  toast(logId ? '✅ Listo, la bitacora se actualizo.' : '✅ Listo, la bitacora se guardo.');
   await loadLogs(true);
   renderWorkspaceModule();
   syncShellUi();
