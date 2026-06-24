@@ -16,7 +16,8 @@ service cloud.firestore {
         authEmail() in [
           "alekcaballeromusic@gmail.com",
           "catalina.medina.leal@gmail.com",
-          "imusicala@gmail.com"
+          "imusicala@gmail.com",
+          "musicalaasesor@gmail.com"
         ];
     }
 
@@ -129,6 +130,14 @@ service cloud.firestore {
         teacherProfileIsActive();
     }
 
+    function ownsTeacherResource(data) {
+      return isSignedIn()
+        && (
+          (data.teacherId is string && data.teacherId == request.auth.uid)
+          || (data.teacherEmail is string && data.teacherEmail == authEmail())
+        );
+    }
+
     function isActiveStudent() {
       return accessRole() == "student" &&
         accessIsActive() &&
@@ -223,90 +232,105 @@ service cloud.firestore {
     }
 
     match /classLogs/{logId} {
-      allow read: if isSignedIn() && canAccessArea(resource.data.areaId);
+      allow read: if isTeacherAdmin() || ownsTeacherResource(resource.data);
       allow create: if isSignedIn()
         && canAccessArea(request.resource.data.areaId)
         && request.resource.data.teacherId == request.auth.uid
         && request.resource.data.teacherEmail == authEmail();
-      allow update: if isSignedIn()
-        && canAccessArea(resource.data.areaId)
-        && canAccessArea(request.resource.data.areaId)
-        && request.resource.data.teacherId == request.auth.uid
-        && request.resource.data.teacherEmail == authEmail();
+      allow update: if isTeacherAdmin()
+        || (
+          ownsTeacherResource(resource.data)
+          && canAccessArea(resource.data.areaId)
+          && canAccessArea(request.resource.data.areaId)
+          && request.resource.data.teacherId == request.auth.uid
+          && request.resource.data.teacherEmail == authEmail()
+        );
       allow delete: if isTeacherAdmin()
-        || (isSignedIn() && resource.data.teacherId == request.auth.uid);
+        || ownsTeacherResource(resource.data);
     }
 
     match /diagnosticos/{recordId} {
-      allow read: if isSignedIn() && canAccessArea(resource.data.areaId);
+      allow read: if isTeacherAdmin() || ownsTeacherResource(resource.data);
       allow create: if isSignedIn()
         && canAccessArea(request.resource.data.areaId)
         && request.resource.data.uid == request.auth.uid
         && request.resource.data.email == authEmail()
         && request.resource.data.teacherId == request.auth.uid
         && request.resource.data.teacherEmail == authEmail();
-      allow update: if isSignedIn()
-        && canAccessArea(resource.data.areaId)
-        && canAccessArea(request.resource.data.areaId)
-        && request.resource.data.uid == request.auth.uid
-        && request.resource.data.email == authEmail()
-        && request.resource.data.teacherId == request.auth.uid
-        && request.resource.data.teacherEmail == authEmail();
+      allow update: if isTeacherAdmin()
+        || (
+          ownsTeacherResource(resource.data)
+          && canAccessArea(resource.data.areaId)
+          && canAccessArea(request.resource.data.areaId)
+          && request.resource.data.uid == request.auth.uid
+          && request.resource.data.email == authEmail()
+          && request.resource.data.teacherId == request.auth.uid
+          && request.resource.data.teacherEmail == authEmail()
+        );
       allow delete: if isTeacherAdmin();
     }
 
     match /proyectos/{recordId} {
-      allow read: if isSignedIn() && canAccessArea(resource.data.areaId);
+      allow read: if isTeacherAdmin() || ownsTeacherResource(resource.data);
       allow create: if isSignedIn()
         && canAccessArea(request.resource.data.areaId)
         && request.resource.data.uid == request.auth.uid
         && request.resource.data.email == authEmail()
         && request.resource.data.teacherId == request.auth.uid
         && request.resource.data.teacherEmail == authEmail();
-      allow update: if isSignedIn()
-        && canAccessArea(resource.data.areaId)
-        && canAccessArea(request.resource.data.areaId)
-        && request.resource.data.uid == request.auth.uid
-        && request.resource.data.email == authEmail()
-        && request.resource.data.teacherId == request.auth.uid
-        && request.resource.data.teacherEmail == authEmail();
+      allow update: if isTeacherAdmin()
+        || (
+          ownsTeacherResource(resource.data)
+          && canAccessArea(resource.data.areaId)
+          && canAccessArea(request.resource.data.areaId)
+          && request.resource.data.uid == request.auth.uid
+          && request.resource.data.email == authEmail()
+          && request.resource.data.teacherId == request.auth.uid
+          && request.resource.data.teacherEmail == authEmail()
+        );
       allow delete: if isTeacherAdmin();
     }
 
     match /muestrasProceso/{recordId} {
-      allow read: if isSignedIn() && canAccessArea(resource.data.areaId);
+      allow read: if isTeacherAdmin() || ownsTeacherResource(resource.data);
       allow create: if isSignedIn()
         && canAccessArea(request.resource.data.areaId)
         && request.resource.data.uid == request.auth.uid
         && request.resource.data.email == authEmail()
         && request.resource.data.teacherId == request.auth.uid
         && request.resource.data.teacherEmail == authEmail();
-      allow update: if isSignedIn()
-        && canAccessArea(resource.data.areaId)
-        && canAccessArea(request.resource.data.areaId)
-        && request.resource.data.uid == request.auth.uid
-        && request.resource.data.email == authEmail()
-        && request.resource.data.teacherId == request.auth.uid
-        && request.resource.data.teacherEmail == authEmail();
+      allow update: if isTeacherAdmin()
+        || (
+          ownsTeacherResource(resource.data)
+          && canAccessArea(resource.data.areaId)
+          && canAccessArea(request.resource.data.areaId)
+          && request.resource.data.uid == request.auth.uid
+          && request.resource.data.email == authEmail()
+          && request.resource.data.teacherId == request.auth.uid
+          && request.resource.data.teacherEmail == authEmail()
+        );
       allow delete: if isTeacherAdmin()
-        || (isSignedIn() && resource.data.teacherId == request.auth.uid);
+        || ownsTeacherResource(resource.data);
     }
 
     match /informesMensuales/{recordId} {
-      allow read: if isSignedIn() && canAccessArea(resource.data.areaId);
+      allow read: if isTeacherAdmin() || ownsTeacherResource(resource.data);
       allow create: if isSignedIn()
         && canAccessArea(request.resource.data.areaId)
         && request.resource.data.uid == request.auth.uid
         && request.resource.data.email == authEmail()
         && request.resource.data.teacherId == request.auth.uid
         && request.resource.data.teacherEmail == authEmail();
-      allow update: if isSignedIn()
-        && canAccessArea(resource.data.areaId)
-        && canAccessArea(request.resource.data.areaId)
-        && request.resource.data.uid == request.auth.uid
-        && request.resource.data.email == authEmail()
-        && request.resource.data.teacherId == request.auth.uid
-        && request.resource.data.teacherEmail == authEmail();
+      allow update: if isTeacherAdmin()
+        || (
+          ownsTeacherResource(resource.data)
+          && canAccessArea(resource.data.areaId)
+          && canAccessArea(request.resource.data.areaId)
+          && request.resource.data.uid == request.auth.uid
+          && request.resource.data.email == authEmail()
+          && request.resource.data.teacherId == request.auth.uid
+          && request.resource.data.teacherEmail == authEmail()
+        );
       allow delete: if isTeacherAdmin();
     }
 

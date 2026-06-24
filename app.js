@@ -1,6 +1,6 @@
 ﻿'use strict';
 
-const BUILD = '2026-06-14.1';
+const BUILD = '2026-06-22.1';
 const SW_RELOAD_KEY = `docentes_fsa_sw_reloaded_${BUILD}`;
 
 const firebaseConfig = {
@@ -327,6 +327,8 @@ const MODULE_STATE = {
   },
   logs: {
     areaId: '',
+    filterAreaId: 'all',
+    selectedIds: [],
     editingId: '',
     showGallery: false,
     galleryAreaId: 'all'
@@ -1380,6 +1382,8 @@ function clearDataState() {
   MODULE_STATE.attendance.areaId = '';
   MODULE_STATE.attendance.editingId = '';
   MODULE_STATE.logs.areaId = '';
+  MODULE_STATE.logs.filterAreaId = 'all';
+  MODULE_STATE.logs.selectedIds = [];
   MODULE_STATE.logs.editingId = '';
   MODULE_STATE.logs.showGallery = false;
   MODULE_STATE.logs.galleryAreaId = 'all';
@@ -2306,11 +2310,41 @@ function buildScopedQuery(collectionName) {
   if (!DB || !areaIds.length) return null;
 
   const col = collection(DB, collectionName);
+  if (isAdminUser()) return col;
+
   if (areaIds.length === 1) {
     return query(col, where('areaId', '==', areaIds[0]));
   }
 
   return query(col, where('areaId', 'in', areaIds.slice(0, 10)));
+}
+
+function buildTeacherOwnedQueries(collectionName) {
+  if (!DB || !CURRENT_USER) return [];
+
+  const col = collection(DB, collectionName);
+  if (isAdminUser()) return [col];
+
+  const queries = [];
+  if (CURRENT_USER.uid) queries.push(query(col, where('teacherId', '==', CURRENT_USER.uid)));
+
+  const teacherEmail = emailKey(CURRENT_USER);
+  if (teacherEmail) queries.push(query(col, where('teacherEmail', '==', teacherEmail)));
+
+  return queries;
+}
+
+async function getMergedDocsFromQueries(queries = []) {
+  const byId = new Map();
+  const snaps = await Promise.all(queries.map((q) => getDocs(q)));
+
+  for (const snap of snaps) {
+    for (const docSnap of snap.docs) {
+      byId.set(docSnap.id, { id: docSnap.id, ...docSnap.data() });
+    }
+  }
+
+  return Array.from(byId.values());
 }
 
 async function loadStudents(force = false) {
@@ -2374,16 +2408,15 @@ async function loadLogs(force = false) {
   if (DATA_STATE.logsLoaded && !force) return DATA_STATE.logs;
 
   try {
-    const q = buildScopedQuery(COLLECTIONS.classLogs);
-    if (!q) {
+    const queries = buildTeacherOwnedQueries(COLLECTIONS.classLogs);
+    if (!queries.length) {
       DATA_STATE.logs = [];
       DATA_STATE.logsLoaded = true;
       syncShellUi();
       return [];
     }
 
-    const snap = await getDocs(q);
-    DATA_STATE.logs = sortByDateDesc(snap.docs.map((docSnap) => ({ id: docSnap.id, ...docSnap.data() })));
+    DATA_STATE.logs = sortByDateDesc(await getMergedDocsFromQueries(queries));
     DATA_STATE.logsLoaded = true;
     syncShellUi();
     return DATA_STATE.logs;
@@ -2400,17 +2433,16 @@ async function loadTeacherRecordType(typeKey, force = false) {
   if (DATA_STATE.teacherRecordsLoaded[typeKey] && !force) return DATA_STATE.teacherRecords[typeKey] || [];
 
   try {
-    const q = buildScopedQuery(config.collection);
-    if (!q) {
+    const queries = buildTeacherOwnedQueries(config.collection);
+    if (!queries.length) {
       DATA_STATE.teacherRecords[typeKey] = [];
       DATA_STATE.teacherRecordsLoaded[typeKey] = true;
       syncShellUi();
       return [];
     }
 
-    const snap = await getDocs(q);
     DATA_STATE.teacherRecords[typeKey] = sortRecordsDesc(
-      snap.docs.map((docSnap) => ({ id: docSnap.id, typeKey, ...docSnap.data() }))
+      (await getMergedDocsFromQueries(queries)).map((record) => ({ typeKey, ...record }))
     );
     DATA_STATE.teacherRecordsLoaded[typeKey] = true;
     syncShellUi();
@@ -2650,6 +2682,30 @@ function findLogDateDuplicates({ logId = '', areaId = '', date = '', sessionTime
     ...item,
     hasSameTime: !!sessionTime && (item.sessionTime || item.time || '') === sessionTime
   }));
+}
+
+function normalizeLogAreaFilter(value = MODULE_STATE.logs.filterAreaId) {
+  const allowed = getAllowedAreaIds();
+  if (value === 'all') return 'all';
+  return allowed.includes(value) ? value : 'all';
+}
+
+function getVisibleLogs() {
+  const filterAreaId = normalizeLogAreaFilter();
+  if (filterAreaId === 'all') return DATA_STATE.logs;
+  return DATA_STATE.logs.filter((item) => item.areaId === filterAreaId);
+}
+
+function requestDuplicateReason(duplicateLogs = [], { date = '', areaId = '', sessionTime = '' } = {}) {
+  const duplicateSummary = duplicateLogs
+    .slice(0, 3)
+    .map((item) => `${item.sessionTime || item.time || 'sin hora'} - ${item.sessionName || 'Bitacora sin titulo'}${item.teacherName ? ` (${item.teacherName})` : ''}`)
+    .join('\n');
+  const reason = window.prompt(
+    `Ya existe una bitacora para ${formatDateLabel(date)} a las ${sessionTime} en ${getAreaLabel(areaId)}:\n\n${duplicateSummary}\n\nSi realmente necesitas duplicar esa misma fecha y hora, escribe la razon. Deja vacio para cancelar.`
+  );
+
+  return String(reason || '').trim();
 }
 
 function getButtonMeta(button, links) {
@@ -3201,9 +3257,16 @@ function renderLogCard(record) {
   const photos = Array.isArray(record.photos) ? record.photos : [];
   const firstPhoto = photos[0]?.url || '';
   const dateTime = [formatDateLabel(record.date), record.sessionTime || record.time || ''].filter(Boolean).join(' · ');
+  const isSelected = MODULE_STATE.logs.selectedIds.includes(record.id);
   return `
-    <button class="recordCard" type="button" data-module-action="log-edit" data-log-id="${escapeHtml(record.id)}">
+    <article class="recordCard${isSelected ? ' is-selected' : ''}">
       <div class="recordCardTop">
+        ${isAdminUser() ? `
+          <label class="selectCheck" title="Seleccionar bitacora">
+            <input type="checkbox" data-log-select="${escapeHtml(record.id)}" ${isSelected ? 'checked' : ''} />
+            <span></span>
+          </label>
+        ` : ''}
         <div>
           <div class="recordTitle">${escapeHtml(record.sessionName || 'Bitacora sin titulo')}</div>
           <div class="recordMeta">${escapeHtml(dateTime)} · ${escapeHtml(getAreaLabel(record.areaId))}</div>
@@ -3213,7 +3276,11 @@ function renderLogCard(record) {
       <div class="recordBody">${escapeHtml(excerpt.slice(0, 140))}</div>
       ${firstPhoto ? `<div class="recordPhotoThumb"><img src="${escapeHtml(firstPhoto)}" alt="Foto de ${escapeHtml(record.sessionName || 'bitacora')}" loading="lazy" /></div>` : ''}
       ${photos.length ? `<div class="recordPhotoMeta">📷 ${escapeHtml(String(photos.length))} foto(s)</div>` : ''}
-    </button>
+      <div class="recordActions">
+        <button class="btnGhost compactBtn" type="button" data-module-action="log-edit" data-log-id="${escapeHtml(record.id)}">Editar</button>
+        ${isAdminUser() ? `<button class="btnDanger compactBtn" type="button" data-module-action="log-delete" data-log-id="${escapeHtml(record.id)}">Eliminar</button>` : ''}
+      </div>
+    </article>
   `;
 }
 
@@ -3528,10 +3595,16 @@ function renderAttendanceModule() {
 function renderLogsModule() {
   const draft = getLogDraft();
   const areaId = userCanAccessArea(draft.areaId) ? draft.areaId : getPrimaryAreaId();
+  const filterAreaId = normalizeLogAreaFilter();
+  const visibleLogs = getVisibleLogs();
+  const visibleLogIds = visibleLogs.map((item) => item.id).filter(Boolean);
+  const selectedVisibleCount = visibleLogIds.filter((id) => MODULE_STATE.logs.selectedIds.includes(id)).length;
+  const selectedTotal = MODULE_STATE.logs.selectedIds.length;
   const galleryAreaId = MODULE_STATE.logs.galleryAreaId || 'all';
   const showGallery = !!MODULE_STATE.logs.showGallery;
   const attachedPhotos = Array.isArray(draft.photos) ? draft.photos : [];
   MODULE_STATE.logs.areaId = areaId;
+  MODULE_STATE.logs.filterAreaId = filterAreaId;
 
   return `
     <div class="workspaceGrid">
@@ -3547,8 +3620,30 @@ function renderLogsModule() {
           </div>
         </div>
 
+        <div class="filterBar">
+          <label class="field compactField">
+            <span class="fieldLabel">Filtrar bitacoras por area</span>
+            <select class="input" name="logFilterAreaId">
+              <option value="all"${filterAreaId === 'all' ? ' selected' : ''}>Todas las areas</option>
+              ${renderAreaOptions({ includeAll: false, selected: filterAreaId })}
+            </select>
+          </label>
+          <span class="filterCount">${escapeHtml(String(visibleLogs.length))} bitacora(s)</span>
+        </div>
+
+        ${isAdminUser() ? `
+          <div class="bulkBar">
+            <span class="bulkSummary">${escapeHtml(String(selectedTotal))} seleccionada(s)</span>
+            <div class="toolbarRow">
+              <button class="btnGhost compactBtn" type="button" data-module-action="log-select-visible" ${visibleLogs.length ? '' : 'disabled'}>${selectedVisibleCount === visibleLogs.length && visibleLogs.length ? 'Quitar visibles' : 'Seleccionar visibles'}</button>
+              <button class="btnGhost compactBtn" type="button" data-module-action="log-clear-selection" ${selectedTotal ? '' : 'disabled'}>Limpiar</button>
+              <button class="btnDanger compactBtn" type="button" data-module-action="log-delete-selected" ${selectedTotal ? '' : 'disabled'}>Eliminar seleccionadas</button>
+            </div>
+          </div>
+        ` : ''}
+
         <div class="recordList">
-          ${DATA_STATE.logs.length ? DATA_STATE.logs.map(renderLogCard).join('') : renderEmptyState('Sin bitacoras registradas', 'Cuando completes la primera bitacora aparecera aqui para lectura y edicion.')}
+          ${visibleLogs.length ? visibleLogs.map(renderLogCard).join('') : renderEmptyState('Sin bitacoras para este filtro', filterAreaId === 'all' ? 'Cuando completes la primera bitacora aparecera aqui para lectura y edicion.' : 'Cambia el area para revisar otras bitacoras disponibles.')}
         </div>
 
         ${showGallery ? `
@@ -3761,6 +3856,7 @@ function recordMatchesFilters(record, filters = {}) {
 function renderRecordCard(record, options = {}) {
   const config = getRecordConfig(record.typeKey);
   const photos = Array.isArray(record.photos) ? record.photos : [];
+  const canDelete = isAdminUser();
   return `
     <article class="recordCard">
       <div class="recordCardTop">
@@ -3768,10 +3864,15 @@ function renderRecordCard(record, options = {}) {
           <div class="recordTitle">${escapeHtml(getRecordTitle(record))}</div>
           <div class="recordMeta">${escapeHtml([config.label, record.month || formatDateLabel(record.date || ''), record.areaName || getAreaLabel(record.areaId), record.teacherName].filter(Boolean).join(' · '))}</div>
         </div>
-        ${options.canEdit ? `<button class="btnGhost" type="button" data-module-action="record-edit" data-record-type="${escapeHtml(record.typeKey)}" data-record-id="${escapeHtml(record.id)}">Editar</button>` : `<span class="statusPill statusOk">Enviado</span>`}
+        ${options.canEdit ? `<button class="btnGhost compactBtn" type="button" data-module-action="record-edit" data-record-type="${escapeHtml(record.typeKey)}" data-record-id="${escapeHtml(record.id)}">Editar</button>` : `<span class="statusPill statusOk">Enviado</span>`}
       </div>
       <div class="recordBody">${escapeHtml(record.monthlySummary || record.diagnosticObservations || record.description || record.sampleDescription || record.projectObjective || 'Registro guardado.')}</div>
       ${photos.length ? `<div class="recordPhotoMeta">📷 ${escapeHtml(String(photos.length))} foto(s)</div>` : ''}
+      ${canDelete ? `
+        <div class="recordActions">
+          <button class="btnDanger compactBtn" type="button" data-module-action="record-delete" data-record-type="${escapeHtml(record.typeKey)}" data-record-id="${escapeHtml(record.id)}">Eliminar</button>
+        </div>
+      ` : ''}
     </article>
   `;
 }
@@ -3952,7 +4053,9 @@ function renderMonthlyReportsModule() {
 
 const ADMIN_EMAILS = new Set([
   'alekcaballeromusic@gmail.com',
-  'catalina.medina.leal@gmail.com'
+  'catalina.medina.leal@gmail.com',
+  'imusicala@gmail.com',
+  'musicalaasesor@gmail.com'
 ]);
 
 function isAdminUser() {
@@ -4548,11 +4651,18 @@ async function saveLog(formData) {
   }
 
   const duplicateLogs = findLogDateDuplicates({ logId, areaId, date, sessionTime });
+  let duplicateReason = '';
   if (duplicateLogs.some((item) => item.hasSameTime)) {
-    toast('Ya existe una bitacora para esa fecha y esa misma hora. Cambia la hora o edita la bitacora existente.');
-    return;
+    duplicateReason = requestDuplicateReason(
+      duplicateLogs.filter((item) => item.hasSameTime),
+      { date, areaId, sessionTime }
+    );
+    if (!duplicateReason) {
+      toast('No se guardo la bitacora duplicada. Cambia la hora, edita la existente o escribe una razon.');
+      return;
+    }
   }
-  if (duplicateLogs.length) {
+  if (duplicateLogs.length && !duplicateReason) {
     const duplicateSummary = duplicateLogs
       .slice(0, 3)
       .map((item) => `${item.sessionTime || item.time || 'sin hora'} - ${item.sessionName || 'Bitacora sin titulo'}`)
@@ -4578,6 +4688,7 @@ async function saveLog(formData) {
   const currentPhotoList = logId
     ? (DATA_STATE.logs.find((item) => item.id === logId)?.photos || [])
     : [];
+  const currentLog = logId ? DATA_STATE.logs.find((item) => item.id === logId) : null;
   let nextPhotoList = Array.isArray(currentPhotoList) ? [...currentPhotoList] : [];
   if (!nextPhotoList.length && !files.length) {
     toast('Debes subir al menos una foto de evidencia para guardar la bitacora.');
@@ -4600,9 +4711,11 @@ async function saveLog(formData) {
     followUp: readFormValue(formData, 'followUp'),
     notes: readFormValue(formData, 'notes'),
     photos: nextPhotoList,
-    teacherId: CURRENT_USER.uid,
-    teacherEmail: emailKey(CURRENT_USER),
-    teacherName: getTeacherDisplayName(),
+    duplicateReason,
+    duplicateCheckedAtClient: duplicateReason ? Date.now() : null,
+    teacherId: currentLog?.teacherId || CURRENT_USER.uid,
+    teacherEmail: currentLog?.teacherEmail || emailKey(CURRENT_USER),
+    teacherName: currentLog?.teacherName || getTeacherDisplayName(),
     updatedAt: serverTimestamp(),
     updatedAtClient: Date.now(),
     source: 'docentes-fsa-hub'
@@ -4663,6 +4776,68 @@ async function saveLog(formData) {
   syncShellUi();
 }
 
+async function deleteLogById(logId) {
+  if (!DB || !isAdminUser()) {
+    toast('Solo el rol admin puede eliminar bitacoras.');
+    return;
+  }
+
+  const record = DATA_STATE.logs.find((item) => item.id === logId);
+  if (!record) {
+    toast('No encontre esa bitacora en la lista cargada.');
+    return;
+  }
+
+  const title = record.sessionName || 'Bitacora sin titulo';
+  const details = [
+    formatDateLabel(record.date),
+    record.sessionTime || record.time || '',
+    getAreaLabel(record.areaId),
+    record.teacherName || record.teacherEmail || ''
+  ].filter(Boolean).join(' · ');
+  const ok = window.confirm(`Vas a eliminar esta bitacora:\n\n${title}\n${details}\n\nEsta accion no se puede deshacer. ¿Confirmas?`);
+  if (!ok) return;
+
+  await deleteDoc(doc(DB, COLLECTIONS.classLogs, logId));
+  if (MODULE_STATE.logs.editingId === logId) MODULE_STATE.logs.editingId = '';
+  toast('Bitacora eliminada.');
+  await Promise.all([loadLogs(true), loadGallery(true)]);
+  renderWorkspaceModule();
+  syncShellUi();
+}
+
+async function deleteSelectedLogs() {
+  if (!DB || !isAdminUser()) {
+    toast('Solo el rol admin puede eliminar bitacoras.');
+    return;
+  }
+
+  const ids = MODULE_STATE.logs.selectedIds.filter((id) => DATA_STATE.logs.some((item) => item.id === id));
+  if (!ids.length) {
+    toast('Selecciona al menos una bitacora para eliminar.');
+    return;
+  }
+
+  const preview = ids
+    .slice(0, 5)
+    .map((id) => {
+      const record = DATA_STATE.logs.find((item) => item.id === id);
+      return `- ${record?.sessionName || 'Bitacora sin titulo'} · ${formatDateLabel(record?.date || '')} · ${record?.sessionTime || record?.time || 'sin hora'} · ${getAreaLabel(record?.areaId)}`;
+    })
+    .join('\n');
+  const extra = ids.length > 5 ? `\n...y ${ids.length - 5} mas.` : '';
+  const ok = window.confirm(`Vas a eliminar ${ids.length} bitacora(s):\n\n${preview}${extra}\n\nEsta accion no se puede deshacer. ¿Confirmas?`);
+  if (!ok) return;
+
+  await Promise.all(ids.map((id) => deleteDoc(doc(DB, COLLECTIONS.classLogs, id))));
+  MODULE_STATE.logs.selectedIds = [];
+  if (ids.includes(MODULE_STATE.logs.editingId)) MODULE_STATE.logs.editingId = '';
+  toast(`${ids.length} bitacora(s) eliminada(s).`);
+  await Promise.all([loadLogs(true), loadGallery(true)]);
+  renderWorkspaceModule();
+  syncShellUi();
+}
+
 async function uploadRecordPhotos({ files, folder, recordId, currentPhotos = [] }) {
   if (!files.length) return Array.isArray(currentPhotos) ? [...currentPhotos] : [];
   if (!STORAGE) throw new Error('storage-not-ready');
@@ -4697,17 +4872,18 @@ async function saveTeacherRecord(formData, forcedTypeKey = '') {
     return;
   }
 
+  const currentRecord = recordId ? (DATA_STATE.teacherRecords[typeKey] || []).find((item) => item.id === recordId) : null;
   const payload = {
     areaId,
     areaName: getAreaLabel(areaId),
     type: config.type,
     tipoRegistro: config.type,
-    teacherId: CURRENT_USER.uid,
-    uid: CURRENT_USER.uid,
-    teacherEmail: emailKey(CURRENT_USER),
-    email: emailKey(CURRENT_USER),
-    teacherName: getTeacherDisplayName(),
-    docenteNombre: getTeacherDisplayName(),
+    teacherId: currentRecord?.teacherId || CURRENT_USER.uid,
+    uid: currentRecord?.uid || currentRecord?.teacherId || CURRENT_USER.uid,
+    teacherEmail: currentRecord?.teacherEmail || emailKey(CURRENT_USER),
+    email: currentRecord?.email || currentRecord?.teacherEmail || emailKey(CURRENT_USER),
+    teacherName: currentRecord?.teacherName || getTeacherDisplayName(),
+    docenteNombre: currentRecord?.docenteNombre || currentRecord?.teacherName || getTeacherDisplayName(),
     updatedAt: serverTimestamp(),
     updatedAtClient: Date.now(),
     source: 'docentes-fsa-hub'
@@ -4741,7 +4917,6 @@ async function saveTeacherRecord(formData, forcedTypeKey = '') {
     toast(`Cada evidencia debe pesar maximo ${Math.floor(maxBytes / 1024 / 1024)}MB.`);
     return;
   }
-  const currentRecord = recordId ? (DATA_STATE.teacherRecords[typeKey] || []).find((item) => item.id === recordId) : null;
   const currentPhotos = Array.isArray(currentRecord?.photos) ? currentRecord.photos : [];
   if (config.evidenceRequired && !currentPhotos.length && !files.length) {
     toast('Debes subir al menos una evidencia fotografica o video para guardar la muestra de proceso.');
@@ -4791,6 +4966,39 @@ async function saveTeacherRecord(formData, forcedTypeKey = '') {
   if (typeKey === 'informesMensuales') MODULE_STATE.monthlyReports.editingId = '';
   else MODULE_STATE.teacherRecords.editingId = '';
   toast(typeKey === 'informesMensuales' ? 'Informe mensual guardado.' : 'Registro docente guardado.');
+  await loadTeacherRecordType(typeKey, true);
+  renderWorkspaceModule();
+  syncShellUi();
+  renderMonthlyReminder();
+}
+
+async function deleteTeacherRecordById(typeKey, recordId) {
+  if (!DB || !isAdminUser()) {
+    toast('Solo el rol admin puede eliminar registros docentes.');
+    return;
+  }
+
+  const config = getRecordConfig(typeKey);
+  if (!config || !recordId) {
+    toast('No pude identificar el registro a eliminar.');
+    return;
+  }
+
+  const record = (DATA_STATE.teacherRecords[typeKey] || []).find((item) => item.id === recordId);
+  if (!record) {
+    toast('No encontre ese registro en la lista cargada.');
+    return;
+  }
+
+  const details = [config.label, record.month || formatDateLabel(record.date || ''), getAreaLabel(record.areaId), record.teacherName || record.teacherEmail || '']
+    .filter(Boolean)
+    .join(' · ');
+  const ok = window.confirm(`Vas a eliminar este registro:\n\n${getRecordTitle(record)}\n${details}\n\nEsta accion no se puede deshacer. ¿Confirmas?`);
+  if (!ok) return;
+
+  await deleteDoc(doc(DB, config.collection, recordId));
+  if (MODULE_STATE.teacherRecords.editingId === recordId) MODULE_STATE.teacherRecords.editingId = '';
+  toast('Registro eliminado.');
   await loadTeacherRecordType(typeKey, true);
   renderWorkspaceModule();
   syncShellUi();
@@ -4859,6 +5067,36 @@ function bindWorkspaceModal() {
       return;
     }
 
+    if (action === 'log-delete') {
+      await deleteLogById(actionEl.getAttribute('data-log-id') || '');
+      return;
+    }
+
+    if (action === 'log-select-visible') {
+      const visibleIds = getVisibleLogs().map((item) => item.id).filter(Boolean);
+      const selected = new Set(MODULE_STATE.logs.selectedIds);
+      const allVisibleSelected = visibleIds.length > 0 && visibleIds.every((id) => selected.has(id));
+      if (allVisibleSelected) {
+        visibleIds.forEach((id) => selected.delete(id));
+      } else {
+        visibleIds.forEach((id) => selected.add(id));
+      }
+      MODULE_STATE.logs.selectedIds = Array.from(selected);
+      renderWorkspaceModule();
+      return;
+    }
+
+    if (action === 'log-clear-selection') {
+      MODULE_STATE.logs.selectedIds = [];
+      renderWorkspaceModule();
+      return;
+    }
+
+    if (action === 'log-delete-selected') {
+      await deleteSelectedLogs();
+      return;
+    }
+
     if (action === 'record-type') {
       MODULE_STATE.teacherRecords.activeType = actionEl.getAttribute('data-record-type') || 'diagnosticos';
       MODULE_STATE.teacherRecords.editingId = '';
@@ -4889,6 +5127,14 @@ function bindWorkspaceModal() {
         MODULE_STATE.teacherRecords.editingId = recordId;
       }
       renderWorkspaceModule();
+      return;
+    }
+
+    if (action === 'record-delete') {
+      await deleteTeacherRecordById(
+        actionEl.getAttribute('data-record-type') || '',
+        actionEl.getAttribute('data-record-id') || ''
+      );
       return;
     }
 
@@ -4923,6 +5169,22 @@ function bindWorkspaceModal() {
     if (target.getAttribute('name') === 'areaId' && target.closest('#log-form')) {
       MODULE_STATE.logs.areaId = target.value;
       MODULE_STATE.logs.editingId = '';
+      renderWorkspaceModule();
+      return;
+    }
+
+    if (target.getAttribute('name') === 'logFilterAreaId') {
+      MODULE_STATE.logs.filterAreaId = target.value || 'all';
+      renderWorkspaceModule();
+      return;
+    }
+
+    const logSelectId = target.getAttribute('data-log-select');
+    if (logSelectId) {
+      const selected = new Set(MODULE_STATE.logs.selectedIds);
+      if (target.checked) selected.add(logSelectId);
+      else selected.delete(logSelectId);
+      MODULE_STATE.logs.selectedIds = Array.from(selected);
       renderWorkspaceModule();
       return;
     }
